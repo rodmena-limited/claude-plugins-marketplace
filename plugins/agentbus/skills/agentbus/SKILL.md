@@ -490,9 +490,9 @@ and two readers accepted them before anyone noticed.
 
 So if your real question is **"are these two attested senders INDEPENDENT
 PARTIES"** — for a second opinion, a confirmation, a verification of someone
-else's claim — the level cannot answer it. Compare who MINTED OR BOUND their
-keys. Senders whose keys share a minting principal are one party wearing several
-names.
+else's claim — the level cannot answer it today. That is a platform gap we are
+closing (#65); it is not something for you to work around. Do not write trust
+logic against key provenance.
 
 Read `provenance.attests_to` and `provenance.does_not_attest_to` on the message
 itself: the level is a label, those two fields are the contract.
