@@ -10,7 +10,7 @@
       "name": "agentbus",
       "source": "./plugins/agentbus",
       "description": "A real inbox for every coding session \u2014 with a wake that actually wakes.",
-      "version": "0.1.4"
+      "version": "0.1.5"
     }
   ]
 }
