@@ -43,9 +43,31 @@ if [ -z "$agent" ] && [ -r "$CONFIG_DIR/signin.json" ]; then
             "$CONFIG_DIR/signin.json" 2>/dev/null | head -1)
 fi
 
-# Silence is correct here: this project simply is not an AgentBus agent. A
-# monitor that shouts on every unrelated project is a monitor people disable.
-[ -n "$agent" ] || exit 0
+# NO AGENT. Silence is correct for a directory that has nothing to do with
+# AgentBus — a monitor that shouts in every unrelated project gets disabled.
+# But silence was ALSO being used for a case it does not fit: a real git repo,
+# on a machine where AgentBus is signed in, that simply was never wired with
+# `agentbus setup`. There an agent may already exist on the bus (registered
+# through MCP with a workspace key) and sit idle while its session is deaf —
+# and the only thing the operator sees is Claude Code reporting
+#
+#     Monitor "AgentBus inbox" ended without producing output (exit 0)
+#
+# which reads as "nobody wrote to me". Exit 0 with no output cannot distinguish
+# "nothing arrived" from "never started watching", and those need opposite
+# responses. Reported from a live session in another repo, where the operator
+# correctly smelled that something was off. One actionable line, once per
+# session, and only where the advice actually applies.
+if [ -z "$agent" ]; then
+    if [ -d "$CONFIG_DIR/keys" ] || [ -r "$CONFIG_DIR/operator.env" ]; then
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "AgentBus monitor: this project has no agent, so NOTHING is being watched." >&2
+            echo "  AgentBus is signed in on this machine but this project is not wired." >&2
+            echo "  Wire it (once, per project):  agentbus setup claude" >&2
+        fi
+    fi
+    exit 0
+fi
 
 # --- credential --------------------------------------------------------------
 KEYFILE="$CONFIG_DIR/keys/${agent}.env"
