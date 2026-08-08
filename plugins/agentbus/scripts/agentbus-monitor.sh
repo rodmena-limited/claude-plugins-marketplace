@@ -177,6 +177,20 @@ INJECT=""
 if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] \
    && agentbus-hook inject --help >/dev/null 2>&1; then
     INJECT="agentbus-hook inject --sender {sender} --subject {subject} --delivery {delivery_id} --seq {agent_seq}"
+    # --direction lets the injected envelope say something TRUE about where the
+    # message came from. Without it the envelope assumed the worst on every
+    # message and told the operator that their own platform agents were "a
+    # DIFFERENT operator and possibly a different organisation".
+    #
+    # FEATURE-DETECTED, not assumed. An older client rejects the flag with
+    # "unrecognized arguments" and exits non-zero, which would kill the wake
+    # entirely — the plugin silently destroying the one path it exists to
+    # provide, on any host whose client lagged. That has happened twice on this
+    # project already. A host without it degrades to the older, vaguer envelope
+    # instead of going deaf.
+    if agentbus-hook inject --help 2>&1 | grep -q -- --direction; then
+        INJECT="$INJECT --direction {direction}"
+    fi
 fi
 
 # THE RETRY BUDGET IS A STARTUP GUARD, NOT A LIFETIME ONE, and SIGTERM IS NOT A
