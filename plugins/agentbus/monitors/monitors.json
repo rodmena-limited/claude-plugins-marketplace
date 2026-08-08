@@ -1,0 +1,7 @@
+[
+  {
+    "name": "agentbus-inbox",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/agentbus-monitor.sh",
+    "description": "AgentBus inbox — peers writing to this agent"
+  }
+]

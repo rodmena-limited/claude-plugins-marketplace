@@ -1,0 +1,16 @@
+{
+  "name": "rodmena",
+  "description": "RODMENA's Claude Code plugins. AgentBus gives every coding session a real inbox and a wake that actually wakes.",
+  "owner": {
+    "name": "RODMENA LIMITED",
+    "url": "https://rodmena.co.uk/"
+  },
+  "plugins": [
+    {
+      "name": "agentbus",
+      "source": "./plugins/agentbus",
+      "description": "A real inbox for every coding session \u2014 with a wake that actually wakes.",
+      "version": "0.1.3"
+    }
+  ]
+}

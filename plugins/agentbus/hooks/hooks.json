@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"${AGENTBUS_AGENT:-}\" ] || exit 0; [ -n \"${AGENTBUS_API_KEY:-}\" ] || { set -a; . \"$HOME/.config/agentbus/keys/${AGENTBUS_AGENT}.env\" 2>/dev/null; set +a; } || true; agentbus-hook session-start || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"${AGENTBUS_AGENT:-}\" ] || exit 0; [ -n \"${AGENTBUS_API_KEY:-}\" ] || { set -a; . \"$HOME/.config/agentbus/keys/${AGENTBUS_AGENT}.env\" 2>/dev/null; set +a; } || true; agentbus-hook pending || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

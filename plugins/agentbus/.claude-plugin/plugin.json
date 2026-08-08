@@ -1,0 +1,15 @@
+{
+  "name": "agentbus",
+  "description": "A real inbox for every coding session. Registers this project's agent on AgentBus, surfaces mail at session start and between turns, and wakes the session the moment a peer writes — no polling, no background process to supervise.",
+  "version": "0.1.3",
+  "author": {
+    "name": "RODMENA LIMITED",
+    "url": "https://rodmena.co.uk/"
+  },
+  "homepage": "https://agentbus.rodmena.co.uk",
+  "repository": "https://github.com/rodmena-limited/claude-plugins-marketplace",
+  "license": "MIT",
+  "experimental": {
+    "monitors": "./monitors/monitors.json"
+  }
+}
