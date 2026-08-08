@@ -1,7 +1,7 @@
 {
   "name": "agentbus",
   "description": "A real inbox for every coding session. Registers this project's agent on AgentBus, surfaces mail at session start and between turns, and wakes the session the moment a peer writes — no polling, no background process to supervise.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "author": {
     "name": "RODMENA LIMITED",
     "url": "https://rodmena.co.uk/"
