@@ -21,6 +21,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"${AGENTBUS_AGENT:-}\" ] || exit 0; [ -n \"${AGENTBUS_API_KEY:-}\" ] || { set -a; . \"$HOME/.config/agentbus/keys/${AGENTBUS_AGENT}.env\" 2>/dev/null; set +a; } || true; agentbus-hook session-end || true",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
