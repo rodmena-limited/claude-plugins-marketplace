@@ -103,7 +103,22 @@ export AGENTBUS_AGENT="$agent"
 # "two processes under one name share an inbox and compete for deliveries"
 # problem in cursor form: whichever advanced it first would hide messages from
 # the other.
-STATE="$CONFIG_DIR/monitor-${agent}.json"
+# PER SESSION, not per agent. Identity is derived from device+repo+path, so
+# every session on one checkout is the SAME agent and would share one state
+# file name. SessionEnd then reaps across sessions — and asymmetrically, because
+# a headless `claude -p` spawns no monitor (they are interactive-only) yet its
+# SessionEnd still reaped whichever monitor it found. A cron job, CI step or git
+# hook running `claude -p` on a repo someone has open would silently kill the
+# interactive session's only active wake path, while the server still reported
+# wake_channel true because a supervised watcher kept answering. Reported by
+# david with a twice-run reproduction; 0.2.0 moved that lie rather than closing
+# it, since before the reap existed there was no way to lose a monitor this way.
+sid="${CLAUDE_CODE_SESSION_ID:-}"
+if [ -n "$sid" ]; then
+    STATE="$CONFIG_DIR/monitor-${agent}-${sid}.json"
+else
+    STATE="$CONFIG_DIR/monitor-${agent}.json"
+fi
 
 # Seed the cursor to the CURRENT END of the inbox before streaming. Without
 # this the watcher drains from a stale checkpoint and every backlogged message
@@ -128,9 +143,41 @@ cleanup() {
 }
 trap cleanup INT TERM HUP
 
+# MID-TURN DELIVERY. Printing to stdout wakes an IDLE session; it does nothing
+# for a session that is thirty minutes into a build. Claude Code's own inbox
+# socket is read BETWEEN TOOL CALLS, so a running tool is never interrupted —
+# the one gap the wake chain still had, and the only documented path to it.
+#
+# The payload format is not in the documentation. It is in the binary's own
+# startup log, which prints the exact socat line, and it was verified by
+# injecting into a live session and watching the line arrive. So this has a
+# known-positive; it is not a guess.
+#
+# `--exec` runs per arrival with the fields shell-quoted, so the injector is a
+# separate process that cannot take the streamer down with it.
+INJECT=""
+if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] && command -v agentbus-hook >/dev/null 2>&1; then
+    INJECT="agentbus-hook inject --sender {sender} --subject {subject} --delivery {delivery_id} --seq {agent_seq}"
+fi
+
+# THE RETRY BUDGET IS A STARTUP GUARD, NOT A LIFETIME ONE, and SIGTERM IS NOT A
+# CRASH. Two designs that are each correct alone composed into a countdown
+# nobody wrote: SessionEnd SIGTERMs the streamer, `wait` reports 143, the loop
+# read that as a crash, spent one of five attempts, and `attempt` never reset on
+# a healthy stream. Five reaps over the life of a session — a cron calling
+# `claude -p` every ten minutes reaches that inside an hour — and the wrapper
+# gave up for good, blaming `agentbus watch` for crashing five times when it had
+# not crashed once. A diagnostic that cannot lead to the right answer is worse
+# than none: an operator reads it and debugs the streamer, the network and the
+# key, which are all fine. Measured and reported by david on his own host.
 attempt=0
 while [ "$attempt" -lt 5 ]; do
-    agentbus watch --agent "$agent" --state "$STATE" &
+    started=$(date +%s 2>/dev/null || echo 0)
+    if [ -n "$INJECT" ]; then
+        agentbus watch --agent "$agent" --state "$STATE" --exec "$INJECT" &
+    else
+        agentbus watch --agent "$agent" --state "$STATE" &
+    fi
     child=$!
     wait "$child"
     status=$?
@@ -138,9 +185,23 @@ while [ "$attempt" -lt 5 ]; do
     # Clean exit: the session is going away, or the key is gone. Either way this
     # is not something a retry fixes.
     [ "$status" -eq 0 ] && exit 0
+    # 143 = SIGTERM. Nothing sends that to the streamer except a deliberate
+    # teardown — this session's SessionEnd reap, or shutdown. Respawning after
+    # it would fight the reap and re-leak the subscription it just closed.
+    if [ "$status" -eq 143 ]; then
+        exit 0
+    fi
+    # A stream that ran a while and then died is a NEW failure, not another
+    # instance of the startup failure the budget exists to bound.
+    now=$(date +%s 2>/dev/null || echo 0)
+    if [ "$now" -gt 0 ] && [ "$started" -gt 0 ] && [ $((now - started)) -ge 60 ]; then
+        attempt=0
+    fi
     attempt=$((attempt + 1))
     sleep $((attempt * 5))
 done
 
-echo "AgentBus monitor: watch exited $status five times; giving up for this session." >&2
+echo "AgentBus monitor: the stream failed 5 times in a row without staying up 60s (last exit $status)." >&2
+echo "  This is a startup failure, not a reap: a deliberate teardown exits 143 and stops quietly." >&2
+echo "  Check the credential and connectivity: agentbus doctor --wake" >&2
 exit 0
