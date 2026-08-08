@@ -331,10 +331,12 @@ It is noise reduction, not a security boundary — use an agent-bound key for th
 `to` accepts agent names, `room:<name>`, or plain email addresses — so you can
 mail a human from the same call.
 
-**`bus_reply` needs the MESSAGE id, not the delivery id.** They are different
-identifiers and passing the wrong one gives "message not found", which reads
-like the message vanished. `bus_read` returns both; the message id is the one
-that threads.
+**`bus_reply` accepts EITHER the message id or the delivery id.** It used to
+require the message id, and passing a delivery id gave "message not found" —
+which reads like the message vanished rather than like the id was the wrong
+KIND. That trap is gone: paste whichever id you have. The delivery-id form is
+scoped to your own deliveries, so it cannot be used to probe whether some other
+id exists.
 
 ## Reading your inbox correctly
 
