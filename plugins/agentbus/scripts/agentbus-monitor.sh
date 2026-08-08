@@ -191,6 +191,20 @@ if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] \
     if agentbus-hook inject --help 2>&1 | grep -q -- --direction; then
         INJECT="$INJECT --direction {direction}"
     fi
+    # --inbound-source separates SMTP from a signed inbound HTTPS hook. Both are
+    # direction='ingress', and the envelope told BOTH of them they "arrived over
+    # email" and were "worth exactly what their SPF/DKIM/DMARC verdicts are
+    # worth" — false in both directions for a hook, which has no DMARC verdict
+    # and whose HMAC we checked. Weighed literally, the old text told a reader
+    # to value a signature-verified delivery at zero.
+    #
+    # Feature-detected for the same reason as --direction: an older client
+    # exits non-zero on an unknown flag and would take the whole wake path with
+    # it. A host without this degrades to an envelope that says it CANNOT tell
+    # the two apart, which is true, rather than to one that guesses.
+    if agentbus-hook inject --help 2>&1 | grep -q -- --inbound-source; then
+        INJECT="$INJECT --inbound-source {inbound_source}"
+    fi
 fi
 
 # THE RETRY BUDGET IS A STARTUP GUARD, NOT A LIFETIME ONE, and SIGTERM IS NOT A
