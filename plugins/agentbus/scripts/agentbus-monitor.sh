@@ -155,8 +155,17 @@ trap cleanup INT TERM HUP
 #
 # `--exec` runs per arrival with the fields shell-quoted, so the injector is a
 # separate process that cannot take the streamer down with it.
+# FEATURE-DETECT, DO NOT EXISTENCE-CHECK. `command -v agentbus-hook` only proves
+# a binary is on PATH — and a client older than 0.4.6 has no `inject`
+# subcommand. Since `agentbus watch` installs its print_line handler ONLY when
+# no --exec is given, an --exec that fails per message produces a monitor that
+# prints NOTHING: the plugin would silently kill the wake path it exists to
+# provide, on any host whose client lagged the plugin. Found by running the
+# final post-deploy test against the INSTALLED client (0.4.4) instead of the
+# source tree, which is the whole reason that rule exists.
 INJECT=""
-if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] && command -v agentbus-hook >/dev/null 2>&1; then
+if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] \
+   && agentbus-hook inject --help >/dev/null 2>&1; then
     INJECT="agentbus-hook inject --sender {sender} --subject {subject} --delivery {delivery_id} --seq {agent_seq}"
 fi
 
