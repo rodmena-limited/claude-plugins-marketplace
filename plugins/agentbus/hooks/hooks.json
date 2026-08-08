@@ -32,6 +32,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"${AGENTBUS_AGENT:-}\" ] || exit 0; [ -n \"${AGENTBUS_API_KEY:-}\" ] || { set -a; . \"$HOME/.config/agentbus/keys/${AGENTBUS_AGENT}.env\" 2>/dev/null; set +a; }; agentbus-hook pre-tool-use 2>/dev/null || printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"AgentBus tool-guard could not run: this plugin needs the agentbus client >= 0.4.13 for the 'pre-tool-use' command. Upgrade with: uv tool install --force rodmena-agentbus. Blocked because the guard could not be consulted, not because the action was refused.\"}}'",
+            "timeout": 60
+          }
+        ]
+      }
     ]
   }
 }
