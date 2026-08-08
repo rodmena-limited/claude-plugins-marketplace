@@ -26,6 +26,16 @@
 #   * `set -a` around the sourcing is load-bearing. Without it the key lands in
 #     an unexported shell variable, the child never sees it, and the failure is
 #     silent — a wired-looking monitor that watches nothing.
+# DIAGNOSTICS GO TO STDOUT, NEVER STDERR. Claude Code "delivers every stdout
+# line to Claude as a notification" — stderr is DISCARDED. So every warning
+# below was previously written to a stream nobody reads, and the operator saw
+# only Claude Code's own summary:
+#
+#     Monitor "AgentBus inbox" ended without producing output (exit 0)
+#
+# which is the exact message these warnings exist to replace. The 0.1.4 fix for
+# silence was itself silent. Reported by the operator opening a session in
+# another repo and seeing the unchanged line.
 set -u
 
 CONFIG_DIR="${AGENTBUS_CONFIG_DIR:-$HOME/.config/agentbus}"
@@ -61,9 +71,9 @@ fi
 if [ -z "$agent" ]; then
     if [ -d "$CONFIG_DIR/keys" ] || [ -r "$CONFIG_DIR/operator.env" ]; then
         if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            echo "AgentBus monitor: this project has no agent, so NOTHING is being watched." >&2
-            echo "  AgentBus is signed in on this machine but this project is not wired." >&2
-            echo "  Wire it (once, per project):  agentbus setup claude" >&2
+            echo "AgentBus monitor: this project has no agent, so NOTHING is being watched."
+            echo "  AgentBus is signed in on this machine but this project is not wired."
+            echo "  Wire it (once, per project):  agentbus setup claude"
         fi
     fi
     exit 0
@@ -78,15 +88,15 @@ if [ -r "$KEYFILE" ]; then
     set +a
 fi
 
-# No key anywhere: say so ONCE on stderr and stop. Exiting quietly here would
+# No key anywhere: say so ONCE and stop. Exiting quietly here would
 # make "not signed in" indistinguishable from "nobody has written to you".
 if [ -z "${AGENTBUS_API_KEY:-}" ]; then
-    echo "AgentBus monitor: no credential for '$agent' ($KEYFILE). Run: agentbus signin <key>" >&2
+    echo "AgentBus monitor: no credential for '$agent' ($KEYFILE). Run: agentbus signin <key>"
     exit 0
 fi
 
 command -v agentbus >/dev/null 2>&1 || {
-    echo "AgentBus monitor: the 'agentbus' CLI is not on PATH. Install: curl -fsSL https://agentbus.rodmena.co.uk/install.sh | bash" >&2
+    echo "AgentBus monitor: the 'agentbus' CLI is not on PATH. Install: curl -fsSL https://agentbus.rodmena.co.uk/install.sh | bash"
     exit 0
 }
 
@@ -210,7 +220,7 @@ while [ "$attempt" -lt 5 ]; do
     sleep $((attempt * 5))
 done
 
-echo "AgentBus monitor: the stream failed 5 times in a row without staying up 60s (last exit $status)." >&2
-echo "  This is a startup failure, not a reap: a deliberate teardown exits 143 and stops quietly." >&2
-echo "  Check the credential and connectivity: agentbus doctor --wake" >&2
+echo "AgentBus monitor: the stream failed 5 times in a row without staying up 60s (last exit $status)."
+echo "  This is a startup failure, not a reap: a deliberate teardown exits 143 and stops quietly."
+echo "  Check the credential and connectivity: agentbus doctor --wake"
 exit 0
