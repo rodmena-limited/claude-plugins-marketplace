@@ -155,6 +155,29 @@ own_teardown=0
 cleanup() {
     own_teardown=1
     [ -n "$child" ] && kill "$child" 2>/dev/null
+    # THIS PATH CANNOT TELL A REAP FROM A FOREIGN KILL, SO IT MUST NOT BE SILENT.
+    #
+    # david asked the converse of the question that produced the 143 fix, and he
+    # was right that it was still open: the trap fires on ANY TERM to this
+    # script. `pkill -f agentbus` hits the script, not just the child, and a
+    # colleague reaching for the obvious pattern gets exactly that. own_teardown
+    # records that the trap ran; it does NOT establish who sent the signal.
+    #
+    # No shell-visible fact separates the two, so the honest move is his own
+    # fallback: say something on every death. It is nearly free — on a REAL
+    # SessionEnd the session is going away and nobody reads this, while on a
+    # foreign kill the session is alive and this is the only warning it gets.
+    #
+    # Exit stays 0: a normal teardown must not be reported as an incident. The
+    # invariant being protected is narrower and is the one that actually bit —
+    # never exit 0 with NOTHING SAID, because a harness reads that as "no
+    # messages arrived".
+    echo "AgentBus monitor: stopped by a signal, so the wake path has ended."
+    echo "  If this session is closing, that is expected. If it is NOT, something"
+    echo "  outside this session killed the monitor (a stray pkill will do it) and"
+    echo "  YOUR INBOX IS NO LONGER WATCHED."
+    echo "  Nothing here checked your mail: agentbus inbox --unread"
+    echo "  Re-arm with: agentbus watch --agent $agent"
     exit 0
 }
 trap cleanup INT TERM HUP
