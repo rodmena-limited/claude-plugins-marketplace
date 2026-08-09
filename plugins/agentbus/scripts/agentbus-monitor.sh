@@ -324,11 +324,22 @@ while [ "$attempt" -lt 5 ]; do
     # loop ever inspects a status. Reaching here at all therefore PROVES the
     # streamer was killed by something that is not this session's teardown.
     if [ "$status" -eq 143 ]; then
-        if [ "$own_teardown" -eq 1 ]; then
-            # A real reap: the session asked for it, so "ended, nothing to say"
-            # is true. This is the one honest silent exit.
-            exit 0
-        fi
+        # NO own_teardown BRANCH HERE, deliberately.
+        #
+        # There used to be one, exiting 0 in silence on the grounds that a real
+        # reap has nothing to say. It was DEAD CODE — `cleanup` is the only
+        # writer of own_teardown and it prints and exits immediately, so control
+        # never returns here — and david found it by reading rather than running,
+        # which is the only way it could be found.
+        #
+        # Removed rather than left harmlessly unreachable, for two reasons. It
+        # contradicted the design it sat inside: the reap case is handled in
+        # `cleanup`, which SPEAKS. And it would become live the moment anyone
+        # made `cleanup` drain instead of exit — reintroducing, silently, the
+        # exact defect this file has now been patched for four times.
+        #
+        # Reaching this line at all means the streamer took a SIGTERM that this
+        # session did not send.
         echo "AgentBus monitor: the wake stream was KILLED (SIGTERM) by something"
         echo "  outside this session — this session was never signalled, so this is"
         echo "  NOT a SessionEnd reap. A stray pkill or another session's sweep will"
