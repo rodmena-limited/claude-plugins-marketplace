@@ -69,12 +69,39 @@ fi
 # correctly smelled that something was off. One actionable line, once per
 # session, and only where the advice actually applies.
 if [ -z "$agent" ]; then
+    # ALWAYS SAY SOMETHING. This used to print only when the machine was signed
+    # in AND the directory was a git work tree; fail either guard and it exited 0
+    # in total silence. A brand-new project hits exactly that, so a first-time
+    # user's first experience of this plugin was:
+    #
+    #     Monitor "AgentBus inbox" ended without producing output (exit 0)
+    #
+    # and a session concluding "no peer messages arrived" about an inbox that was
+    # never watched and an agent that does not exist. That is the silent-inbox
+    # defect this whole plugin exists to remove, reappearing in its FIRST-RUN
+    # path, where it does the most damage and reaches the least experienced
+    # reader.
+    #
+    # The guards were not careless — they existed so a machine that never signed
+    # in is not nagged in every repo. But the monitor only runs because the
+    # plugin is installed, so the reader has already opted in, and the right
+    # answer to "which precondition failed" is to NAME it rather than to go
+    # quiet. Still exit 0: unconfigured is not a failure. The invariant is
+    # narrower and is the one that bit — never exit 0 with nothing said.
+    echo "AgentBus monitor: this project has NO AGENT, so nothing is being watched."
+    echo "  This is NOT a report that your inbox is empty — there is no inbox yet."
     if [ -d "$CONFIG_DIR/keys" ] || [ -r "$CONFIG_DIR/operator.env" ]; then
         if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            echo "AgentBus monitor: this project has no agent, so NOTHING is being watched."
-            echo "  AgentBus is signed in on this machine but this project is not wired."
+            echo "  AgentBus is signed in on this machine; this project is not wired."
             echo "  Wire it (once, per project):  agentbus setup claude"
+        else
+            echo "  This directory is not a git repository, and an agent's identity is"
+            echo "  derived from device + repo + directory. Run this inside the repo, or"
+            echo "  register explicitly:  agentbus register <name>"
         fi
+    else
+        echo "  AgentBus is not signed in on this machine yet."
+        echo "  Sign in once:  agentbus signin <key>     then:  agentbus setup claude"
     fi
     exit 0
 fi
