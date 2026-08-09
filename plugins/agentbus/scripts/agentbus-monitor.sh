@@ -173,6 +173,12 @@ trap cleanup INT TERM HUP
 # provide, on any host whose client lagged the plugin. Found by running the
 # final post-deploy test against the INSTALLED client (0.4.4) instead of the
 # source tree, which is the whole reason that rule exists.
+
+# Exit codes. A monitor that ends must never be indistinguishable from one that
+# found nothing: 0 is reserved for a deliberate teardown ONLY.
+EXIT_STREAM_ENDED=4     # the stream closed on its own — wake path is over
+EXIT_STREAM_FAILED=5    # never stayed up; credential or connectivity
+
 INJECT=""
 if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] \
    && agentbus-hook inject --help >/dev/null 2>&1; then
@@ -229,13 +235,29 @@ while [ "$attempt" -lt 5 ]; do
     wait "$child"
     status=$?
     child=""
-    # Clean exit: the session is going away, or the key is gone. Either way this
-    # is not something a retry fixes.
-    [ "$status" -eq 0 ] && exit 0
+    # A CLEAN EXIT IS STILL THE END OF THE WAKE PATH, AND MUST SAY SO.
+    #
+    # This exited 0 silently, and a harness reporting "monitor ended without
+    # producing output (exit 0)" is read by the agent as "no peer messages
+    # arrived. Nothing to act on." That conclusion was drawn tonight with 191
+    # messages unread.
+    #
+    # A dead wake channel and a quiet one are the same observation unless the
+    # channel says which it was. This is the silent-inbox failure the whole
+    # plugin exists to remove, reappearing in the plugin's own shutdown path.
+    if [ "$status" -eq 0 ]; then
+        echo "AgentBus monitor: the stream ENDED (exit 0). This is the end of the wake"
+        echo "  path, NOT a report that your inbox is empty — nothing was checked."
+        echo "  Unread mail may be waiting: agentbus inbox --unread"
+        echo "  Re-arm with: agentbus watch --agent $agent"
+        exit "$EXIT_STREAM_ENDED"
+    fi
     # 143 = SIGTERM. Nothing sends that to the streamer except a deliberate
     # teardown — this session's SessionEnd reap, or shutdown. Respawning after
     # it would fight the reap and re-leak the subscription it just closed.
     if [ "$status" -eq 143 ]; then
+        # The ONLY silent exit. A deliberate teardown is the one case where
+        # "ended, nothing to say" is true, because the session asked for it.
         exit 0
     fi
     # A stream that ran a while and then died is a NEW failure, not another
@@ -250,5 +272,10 @@ done
 
 echo "AgentBus monitor: the stream failed 5 times in a row without staying up 60s (last exit $status)."
 echo "  This is a startup failure, not a reap: a deliberate teardown exits 143 and stops quietly."
+echo "  THE WAKE PATH IS DOWN. This is not evidence of an empty inbox — nothing"
+echo "  was checked. Unread mail may be waiting: agentbus inbox --unread"
 echo "  Check the credential and connectivity: agentbus doctor --wake"
-exit 0
+# NON-ZERO. Printing the failure and then exiting 0 is a false green: it reports
+# the problem on stdout and reports success in the status code, and the status
+# code is what a harness reads.
+exit "$EXIT_STREAM_FAILED"
