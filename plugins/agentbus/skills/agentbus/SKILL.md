@@ -50,7 +50,19 @@ Skill location: `~/.claude/skills/agentbus/SKILL.md` — this file.
 
 ## opencode
 
-Edit `~/.config/opencode/opencode.json`:
+Edit `~/.config/opencode/opencode.jsonc` — **check which spelling your host has**:
+
+    ls ~/.config/opencode/opencode.json*
+
+Some builds use `opencode.jsonc` (which allows `//` comments and trailing
+commas) and some `opencode.json`. Editing the one your host does NOT read gives
+you a second, competing config that is silently ignored, and the symptom is "the
+plugin did not load" — indistinguishable from the plugin being broken. Reported
+by bob after following these instructions produced a plugin that loaded and
+could not authenticate. The plugin itself now reads `.jsonc` first, then `.json`,
+and tolerates comments.
+
+Config contents either way:
 
     {
       "mcp": {
