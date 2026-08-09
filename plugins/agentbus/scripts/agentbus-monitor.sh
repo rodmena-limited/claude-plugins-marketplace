@@ -147,7 +147,13 @@ agentbus watch --agent "$agent" --state "$STATE" --once >/dev/null 2>&1 || true
 # this platform three times (a peer's watcher, our own API workers, and this
 # script during its first test), so it is trapped rather than trusted.
 child=""
+# Set BEFORE the child is killed, so the streamer's 143 can be attributed. This
+# is the whole distinction #91 turns on: if WE were signalled, the teardown is
+# this session's and silence is honest. If the streamer died of SIGTERM and this
+# flag was never set, somebody else killed it.
+own_teardown=0
 cleanup() {
+    own_teardown=1
     [ -n "$child" ] && kill "$child" 2>/dev/null
     exit 0
 }
@@ -178,6 +184,7 @@ trap cleanup INT TERM HUP
 # found nothing: 0 is reserved for a deliberate teardown ONLY.
 EXIT_STREAM_ENDED=4     # the stream closed on its own — wake path is over
 EXIT_STREAM_FAILED=5    # never stayed up; credential or connectivity
+EXIT_STREAM_KILLED=6    # somebody else's SIGTERM — not this session's reap
 
 INJECT=""
 if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] \
@@ -252,13 +259,35 @@ while [ "$attempt" -lt 5 ]; do
         echo "  Re-arm with: agentbus watch --agent $agent"
         exit "$EXIT_STREAM_ENDED"
     fi
-    # 143 = SIGTERM. Nothing sends that to the streamer except a deliberate
-    # teardown — this session's SessionEnd reap, or shutdown. Respawning after
-    # it would fight the reap and re-leak the subscription it just closed.
+    # 143 = SIGTERM, AND WHO SENT IT DECIDES WHETHER SILENCE IS HONEST.
+    #
+    # This used to exit 0 without a word, justified by "nothing sends that to
+    # the streamer except a deliberate teardown". That was false, and the
+    # maintainer was the counterexample: a `pkill -f "watch --agent"` swept up
+    # four peers' watchers. Each peer's monitor took the kill for its own
+    # session's reap, said nothing, and their operators read "Monitor ended
+    # without producing output (exit 0)" as "no messages arrived". david
+    # reported it twice, with the line numbers, before it was believed.
+    #
+    # The distinction was in this script the whole time and simply unused: a
+    # real teardown signals THIS SCRIPT, so `cleanup` runs and exits before the
+    # loop ever inspects a status. Reaching here at all therefore PROVES the
+    # streamer was killed by something that is not this session's teardown.
     if [ "$status" -eq 143 ]; then
-        # The ONLY silent exit. A deliberate teardown is the one case where
-        # "ended, nothing to say" is true, because the session asked for it.
-        exit 0
+        if [ "$own_teardown" -eq 1 ]; then
+            # A real reap: the session asked for it, so "ended, nothing to say"
+            # is true. This is the one honest silent exit.
+            exit 0
+        fi
+        echo "AgentBus monitor: the wake stream was KILLED (SIGTERM) by something"
+        echo "  outside this session — this session was never signalled, so this is"
+        echo "  NOT a SessionEnd reap. A stray pkill or another session's sweep will"
+        echo "  do it."
+        echo "  THE WAKE PATH IS DOWN, and nothing checked your inbox: this is not a"
+        echo "  report that no mail arrived. Unread mail may be waiting:"
+        echo "    agentbus inbox --unread"
+        echo "  Re-arm with: agentbus watch --agent $agent"
+        exit "$EXIT_STREAM_KILLED"
     fi
     # A stream that ran a while and then died is a NEW failure, not another
     # instance of the startup failure the budget exists to bound.
