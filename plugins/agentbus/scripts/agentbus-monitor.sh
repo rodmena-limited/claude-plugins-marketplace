@@ -17,8 +17,9 @@
 #
 # Resolution rules, each of which was a real failure first:
 #   * the acting agent comes from THIS project (a monitor runs in the session
-#     working directory), never from a guess. No agent -> exit 0, silently: a
-#     monitor that invents an identity watches an inbox nobody owns.
+#     working directory), never from a guess. No agent -> stay silent and idle:
+#     a monitor that invents an identity watches an inbox nobody owns, and a
+#     monitor that explains itself in unrelated repos gets uninstalled.
 #   * the credential is read from the per-agent key file. It CANNOT come from
 #     plugin user config: monitor commands receive no ${user_config.*}
 #     substitution and no CLAUDE_PLUGIN_OPTION_* environment, by design, since
@@ -73,71 +74,36 @@ fi
 # resolved at all, and an unwired directory now takes the no-agent branch, which
 # says so.
 
-# NO AGENT. Silence is correct for a directory that has nothing to do with
-# AgentBus — a monitor that shouts in every unrelated project gets disabled.
-# But silence was ALSO being used for a case it does not fit: a real git repo,
-# on a machine where AgentBus is signed in, that simply was never wired with
-# `agentbus setup`. There an agent may already exist on the bus (registered
-# through MCP with a workspace key) and sit idle while its session is deaf —
-# and the only thing the operator sees is Claude Code reporting
-#
-#     Monitor "AgentBus inbox" ended without producing output (exit 0)
-#
-# which reads as "nobody wrote to me". Exit 0 with no output cannot distinguish
-# "nothing arrived" from "never started watching", and those need opposite
-# responses. Reported from a live session in another repo, where the operator
-# correctly smelled that something was off. One actionable line, once per
-# session, and only where the advice actually applies.
+# NO AGENT -> COMPLETE SILENCE. See the branch body for why this is the one
+# place in this file where silence is correct, and why it cannot be achieved by
+# exiting.
 if [ -z "$agent" ]; then
-    # ALWAYS SAY SOMETHING. This used to print only when the machine was signed
-    # in AND the directory was a git work tree; fail either guard and it exited 0
-    # in total silence. A brand-new project hits exactly that, so a first-time
-    # user's first experience of this plugin was:
+    # A PROJECT WITH NO AGENT GETS COMPLETE SILENCE, and that is a product
+    # decision that overrides the engineering instinct behind the rest of this
+    # file.
     #
-    #     Monitor "AgentBus inbox" ended without producing output (exit 0)
+    # The invariant everything else here defends is "never end silently", because
+    # a session reads "Monitor ended without producing output (exit 0)" as "no
+    # mail arrived". That is right for a project that HAS an agent: silence there
+    # means a dead wake wearing the costume of an empty inbox.
     #
-    # and a session concluding "no peer messages arrived" about an inbox that was
-    # never watched and an agent that does not exist. That is the silent-inbox
-    # defect this whole plugin exists to remove, reappearing in its FIRST-RUN
-    # path, where it does the most damage and reaches the least experienced
-    # reader.
+    # It is wrong here. An unwired directory has no inbox, so there is nothing to
+    # miss and nothing to misreport. The operator's judgement, and it is correct:
+    # a customer opening a brand-new repo wants NOTHING from a bus they have not
+    # asked for. A monitor that explains itself in every unrelated project is a
+    # monitor that gets uninstalled — and then the wake is gone everywhere,
+    # including where it mattered.
     #
-    # The guards were not careless — they existed so a machine that never signed
-    # in is not nagged in every repo. But the monitor only runs because the
-    # plugin is installed, so the reader has already opted in, and the right
-    # answer to "which precondition failed" is to NAME it rather than to go
-    # quiet. Still exit 0: unconfigured is not a failure. The invariant is
-    # narrower and is the one that bit — never exit 0 with nothing said.
-    echo "AgentBus monitor: this project has NO AGENT, so nothing is being watched."
-    echo "  This is NOT a report that your inbox is empty — there is no inbox yet."
-    if [ -d "$CONFIG_DIR/keys" ] || [ -r "$CONFIG_DIR/operator.env" ]; then
-        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            echo "  AgentBus is signed in on this machine; this project is not wired."
-            echo "  Wire it (once, per project):  agentbus setup claude"
-        else
-            echo "  This directory is not a git repository, and an agent's identity is"
-            echo "  derived from device + repo + directory. Run this inside the repo, or"
-            echo "  register explicitly:  agentbus register <name>"
-        fi
-    else
-        echo "  AgentBus is not signed in on this machine yet."
-        echo "  Sign in once:  agentbus signin <key>     then:  agentbus setup claude"
-    fi
-    # SAY THAT WE ARE STOPPING, because the harness is about to say it for us.
+    # We cannot achieve silence by exiting: the harness announces the exit either
+    # way ("ended without producing output" if quiet, "stream ended" if not), so
+    # BOTH of the obvious options are noise. The only way to emit nothing is to
+    # not end. So: stay quiet and idle, and let SessionEnd reap us.
     #
-    # The operator saw this message land correctly and then, seconds later, a
-    # second event: 'Monitor "AgentBus inbox" stream ended ... no further
-    # AgentBus watching is active'. Nothing broke — that is Claude Code
-    # reporting that this process exited — but arriving unannounced it reads
-    # like a failure following a warning, and the session dutifully relayed it
-    # as one. Two notifications for one non-event, the second scarier than the
-    # first.
-    #
-    # We cannot suppress the harness's notice; we CAN stop it being a surprise.
-    # Announcing the exit costs one line and turns a second alarming event into
-    # a confirmation of what was just said.
-    echo "  This monitor is stopping now — there is nothing to watch until the"
-    echo "  project is wired. Re-open the session afterwards and it starts again."
+    # `no_agent` also makes the teardown quiet — the "your wake path has ended"
+    # warning is meaningful only if there was a wake to lose, and here there
+    # never was one.
+    no_agent=1
+    while :; do sleep 3600; done
     exit 0
 fi
 
@@ -214,8 +180,16 @@ child=""
 # this session's and silence is honest. If the streamer died of SIGTERM and this
 # flag was never set, somebody else killed it.
 own_teardown=0
+no_agent=0
 cleanup() {
     own_teardown=1
+    # Nothing was ever watched here, so there is no wake to have lost and
+    # nothing worth saying at teardown. Silence in this state is the whole point
+    # of the no-agent branch; announcing the exit would reintroduce the noise it
+    # exists to avoid, at session end instead of session start.
+    if [ "$no_agent" -eq 1 ]; then
+        exit 0
+    fi
     [ -n "$child" ] && kill "$child" 2>/dev/null
     # THIS PATH CANNOT TELL A REAP FROM A FOREIGN KILL, SO IT MUST NOT BE SILENT.
     #

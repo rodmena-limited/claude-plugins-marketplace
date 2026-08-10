@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
-# THE ONE INVARIANT: the monitor must never exit 0 having said nothing.
+# TWO INVARIANTS, and which applies depends on whether the project HAS AN AGENT.
+#
+#   HAS an agent  -> must never end silently. "Monitor ended without producing
+#                    output (exit 0)" is read as "no mail arrived", so silence
+#                    there is a dead wake wearing the costume of an empty inbox.
+#   NO agent      -> must emit NOTHING AT ALL, and must not end. An unwired
+#                    directory has no inbox, so there is nothing to miss; and a
+#                    monitor that explains itself in every unrelated repo gets
+#                    uninstalled, which removes the wake everywhere including
+#                    where it mattered. Neither exiting quietly nor exiting
+#                    loudly is silent — the harness announces the exit either way
+#                    — so the only way to emit nothing is to stay idle.
+#
+# The second rule REVERSES what this probe asserted on 2026-08-09, when it
+# demanded output from an unwired directory. That assertion was not a bug in the
+# probe; the rule it encoded was wrong, and the operator said so: a customer in a
+# new repo wants nothing.
 #
 # "Monitor ended without producing output (exit 0)" is read by a session as "no
 # peer messages arrived", so a silent exit turns every unwatched inbox into a
@@ -20,6 +36,25 @@ MON="$(cd "$(dirname "$MON")" && pwd)/$(basename "$MON")"
 pass=0; fail=0
 say() { if [ "$1" = ok ]; then pass=$((pass+1)); printf '  [PASS] %s\n         %s\n' "$2" "$3"
         else fail=$((fail+1)); printf '  [FAIL] %s\n         %s\n' "$2" "$3"; fi; }
+
+# For an UNWIRED project: assert TOTAL SILENCE and that it did not end. Run it
+# under a timeout — a clean timeout kill (124) is the proof it stayed alive.
+run_quiet_case() {
+    name="$1"; shift
+    out=$(mktemp); tmphome=$(mktemp -d)
+    ( cd "$tmphome" && env "$@" CLAUDE_CODE_MESSAGING_SOCKET= \
+        timeout 8 sh "$MON" ) > "$out" 2>/dev/null
+    rc=$?
+    bytes=$(wc -c < "$out")
+    if [ "$bytes" -ne 0 ]; then
+        say fail "$name (must be SILENT)" "emitted ${bytes}B — a customer in a new repo wants nothing: $(head -1 "$out")"
+    elif [ "$rc" -ne 124 ]; then
+        say fail "$name (must be SILENT)" "exited rc=$rc instead of staying idle — the harness will announce the exit, which is the noise we are removing"
+    else
+        say ok "$name (must be SILENT)" "no output, still running: the harness has nothing to announce"
+    fi
+    rm -rf "$tmphome"; rm -f "$out"
+}
 
 # Each case: a name, and an env that drives the monitor down one startup path.
 run_case() {
@@ -45,12 +80,12 @@ echo "=== every startup state must SAY something ==="
 
 # 1. Brand-new project: no agent, machine not signed in, not a git repo.
 #    This is the case the operator hit, and it was totally silent.
-run_case "new project, not signed in, not a git repo" \
+run_quiet_case "new project, not signed in, not a git repo" \
     HOME="$(mktemp -d)" AGENTBUS_AGENT= AGENTBUS_API_KEY=
 
 # 2. Signed in on the machine, but this project is not wired.
 tmpcfg=$(mktemp -d); mkdir -p "$tmpcfg/keys"
-run_case "signed in, project not wired" \
+run_quiet_case "signed in, project not wired" \
     HOME="$tmpcfg" AGENTBUS_CONFIG_DIR="$tmpcfg" AGENTBUS_AGENT= AGENTBUS_API_KEY=
 
 # 3. An agent is named but no credential exists for it.
