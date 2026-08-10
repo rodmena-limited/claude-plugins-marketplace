@@ -97,13 +97,58 @@ if [ -z "$agent" ]; then
     # announces our exit either way ("ended without producing output" when quiet,
     # "stream ended" when not), so exiting is itself the noise. Staying idle emits
     # nothing at all. The operator's report was that line, not our silence.
+    # THE MACHINE DEFAULT IS BACK, AS A LAST RESORT THAT ANNOUNCES ITSELF.
+    #
+    # I deleted this fallback tonight because bob reproduced a real cross-agent
+    # leak with it: an unwired scratch directory attached to david's stream and
+    # reached cursor 474. The leak was real and the deletion looked correct.
+    #
+    # It also killed david. He IS this machine's default, his directory has never
+    # been wired, and his wake path had been running on this fallback the whole
+    # time. bob then verified the consequence: pgrep -P <monitor> showed one child,
+    # `sleep 3600`. No watcher. Fourteen minutes parked, silent, while his harness
+    # reported a healthy running monitor — and he could not report it himself,
+    # because the symptom IS not waking.
+    #
+    # "Remove a fallback" and "who is relying on that fallback" are two questions
+    # and only the first got asked. So the rule now weighs the two failures:
+    #
+    #   attach to the wrong agent  -> wrong, but VISIBLE: it says whose mail it is
+    #                                 watching, so an operator kills it in seconds.
+    #   attach to nobody           -> SILENT, total, and unreportable by its victim.
+    #
+    # Visible-and-wrong beats silent-and-dead, so the fallback stays and pays for
+    # itself with three lines naming exactly what it did. The real cure is wiring
+    # at registration time (`agentbus register` now claims the project identity),
+    # which makes this path rare rather than load-bearing.
+    if [ -r "$CONFIG_DIR/signin.json" ]; then
+        agent=$(sed -n 's/.*"default_agent"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                "$CONFIG_DIR/signin.json" 2>/dev/null | head -1)
+    fi
+    if [ -n "$agent" ]; then
+        echo "AgentBus monitor: this project is not wired, so it is watching as '$agent'," \
+             "this machine's signed-in default."
+        echo "  If '$agent' is not the right agent HERE, that agent's mail is being consumed"
+        echo "  in this session. Wire this project:  agentbus setup claude --role <role>"
+    fi
+fi
+
+if [ -z "$agent" ]; then
+    # NO agent and NO machine default. Say so if the machine is signed in at all —
+    # and note what is NOT guarding this any more.
+    #
+    # This used to require `git rev-parse --is-inside-work-tree` as well. david's
+    # directory is not a git work tree, so the explanation was suppressed and the
+    # park below ran in total silence. That is the identical guard combination my
+    # own 0.5.10 comment records as the original defect ("fail either guard and it
+    # exited 0 in total silence"), reintroduced deliberately in 0.6.x, with him as
+    # the cost. A signed-in machine that cannot resolve an agent has something
+    # worth saying regardless of what kind of directory it is standing in.
     if [ -d "$CONFIG_DIR/keys" ] || [ -r "$CONFIG_DIR/operator.env" ]; then
-        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            echo "AgentBus monitor: this repo has no agent, so NOTHING is being watched."
-            echo "  This is NOT a report that your inbox is empty — there is no inbox."
-            echo "  AgentBus is signed in on this machine; this project is not wired."
-            echo "  Wire it (once, per project):  agentbus setup claude"
-        fi
+        echo "AgentBus monitor: this repo has no agent, so NOTHING is being watched."
+        echo "  This is NOT a report that your inbox is empty — there is no inbox."
+        echo "  AgentBus is signed in on this machine; this project is not wired."
+        echo "  Wire it (once, per project):  agentbus setup claude"
     fi
     no_agent=1
     while :; do sleep 3600; done
