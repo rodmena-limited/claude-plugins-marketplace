@@ -48,10 +48,30 @@ if [ -z "$agent" ] && [ -r ".claude/settings.local.json" ]; then
             .claude/settings.local.json 2>/dev/null | head -1)
 fi
 
-if [ -z "$agent" ] && [ -r "$CONFIG_DIR/signin.json" ]; then
-    agent=$(sed -n 's/.*"default_agent"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-            "$CONFIG_DIR/signin.json" 2>/dev/null | head -1)
-fi
+# THE MACHINE-GLOBAL default_agent FALLBACK IS GONE. It was a cross-agent leak.
+#
+# It used to read `default_agent` from signin.json when a directory had no
+# wiring of its own. bob reproduced the consequence on his host: a scratch
+# directory that was not a git repo, with AGENTBUS_AGENT unset, started
+# STREAMING david's INBOX — reaching cursor 474 before he killed it. Not his
+# agent, not no agent: another person's mail, attached to by a background
+# watcher, unattended.
+#
+# It was invisible here because this host has `default_agent: null`. The one
+# machine we tested on is the one where the fallback cannot fire.
+#
+# Our own opencode plugin already refuses exactly this, in as many words —
+# agentbus.ts:230 "Ask the credential who it is. NEVER guess, and never fall
+# back" — after an earlier build streamed agentbus-dev's mail into a session
+# meant to be frontend-builder. Two artifacts on one team held opposite policies
+# on the same hazard, and the unsafe one was the one running everywhere.
+#
+# A machine-global default is defensible for `agentbus send`, where an operator
+# is present and can see whose name is on the message. It is not defensible for
+# a background watcher that attaches to an inbox with nobody watching. Identity
+# is declared per project (env, or .claude/settings.local.json) or it is not
+# resolved at all, and an unwired directory now takes the no-agent branch, which
+# says so.
 
 # NO AGENT. Silence is correct for a directory that has nothing to do with
 # AgentBus — a monitor that shouts in every unrelated project gets disabled.

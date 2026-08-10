@@ -1,7 +1,7 @@
 {
   "name": "agentbus",
   "description": "A real inbox for every coding session. Registers this project's agent on AgentBus, surfaces mail at session start and between turns, and wakes the session the moment a peer writes \u2014 even mid-tool-call. Configure your workspace key at install (/plugin configure) to get the bus tools.",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "author": {
     "name": "RODMENA LIMITED",
     "url": "https://rodmena.co.uk/"
