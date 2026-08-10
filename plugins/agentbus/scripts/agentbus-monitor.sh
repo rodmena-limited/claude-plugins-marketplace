@@ -49,30 +49,13 @@ if [ -z "$agent" ] && [ -r ".claude/settings.local.json" ]; then
             .claude/settings.local.json 2>/dev/null | head -1)
 fi
 
-# THE MACHINE-GLOBAL default_agent FALLBACK IS GONE. It was a cross-agent leak.
-#
-# It used to read `default_agent` from signin.json when a directory had no
-# wiring of its own. bob reproduced the consequence on his host: a scratch
-# directory that was not a git repo, with AGENTBUS_AGENT unset, started
-# STREAMING david's INBOX — reaching cursor 474 before he killed it. Not his
-# agent, not no agent: another person's mail, attached to by a background
-# watcher, unattended.
-#
-# It was invisible here because this host has `default_agent: null`. The one
-# machine we tested on is the one where the fallback cannot fire.
-#
-# Our own opencode plugin already refuses exactly this, in as many words —
-# agentbus.ts:230 "Ask the credential who it is. NEVER guess, and never fall
-# back" — after an earlier build streamed agentbus-dev's mail into a session
-# meant to be frontend-builder. Two artifacts on one team held opposite policies
-# on the same hazard, and the unsafe one was the one running everywhere.
-#
-# A machine-global default is defensible for `agentbus send`, where an operator
-# is present and can see whose name is on the message. It is not defensible for
-# a background watcher that attaches to an inbox with nobody watching. Identity
-# is declared per project (env, or .claude/settings.local.json) or it is not
-# resolved at all, and an unwired directory now takes the no-agent branch, which
-# says so.
+# THE MACHINE-GLOBAL default_agent FALLBACK: REMOVED IN 0.5.13, RESTORED IN 0.6.4.
+# The full reasoning is at the fallback itself, below. In short: bob reproduced a
+# real cross-agent leak with it (an unwired scratch directory streaming david's
+# inbox to cursor 474), so it was deleted — and the deletion parked david's own
+# monitor on `sleep 3600`, silent and unreportable, because he IS this machine's
+# default and his directory was never wired. It is back, and it now ANNOUNCES
+# whose mail it is watching, which is what makes the leak survivable.
 
 # NO AGENT -> COMPLETE SILENCE. See the branch body for why this is the one
 # place in this file where silence is correct, and why it cannot be achieved by
@@ -137,18 +120,33 @@ if [ -z "$agent" ]; then
     # NO agent and NO machine default. Say so if the machine is signed in at all —
     # and note what is NOT guarding this any more.
     #
-    # This used to require `git rev-parse --is-inside-work-tree` as well. david's
-    # directory is not a git work tree, so the explanation was suppressed and the
-    # park below ran in total silence. That is the identical guard combination my
-    # own 0.5.10 comment records as the original defect ("fail either guard and it
-    # exited 0 in total silence"), reintroduced deliberately in 0.6.x, with him as
-    # the cost. A signed-in machine that cannot resolve an agent has something
-    # worth saying regardless of what kind of directory it is standing in.
+    # THE GIT-WORK-TREE GUARD STAYS HERE, AND david IS STILL FIXED. Both, and the
+    # reasoning matters because I got it wrong in 0.6.4 by removing it.
+    #
+    # Two rules were in genuine conflict:
+    #   R1  a monitor that talks in unrelated directories gets uninstalled,
+    #       taking the wake with it everywhere. A bare directory says nothing.
+    #   R2  a signed-in machine must never park silently — that killed david.
+    #
+    # Removing this guard served R2 by breaking R1: with it gone, every non-repo
+    # directory on a signed-in machine nagged about a bus nobody asked for, and
+    # probe_onboarding's "a non-repo directory stays silent" caught it in the
+    # deploy gate.
+    #
+    # The resolution is that david never needed THIS branch. His machine has a
+    # default_agent, so he takes the fallback above: it ATTACHES and announces,
+    # which both wakes him and says whose mail it is watching. This branch is only
+    # reached when there is no project identity AND no machine default — i.e.
+    # there is no agent to watch and nothing to miss. Silence is correct there,
+    # and the git check is what distinguishes "your project, not wired" (worth one
+    # line) from "some directory you happened to cd into" (worth nothing).
     if [ -d "$CONFIG_DIR/keys" ] || [ -r "$CONFIG_DIR/operator.env" ]; then
+      if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         echo "AgentBus monitor: this repo has no agent, so NOTHING is being watched."
         echo "  This is NOT a report that your inbox is empty — there is no inbox."
         echo "  AgentBus is signed in on this machine; this project is not wired."
         echo "  Wire it (once, per project):  agentbus setup claude"
+      fi
     fi
     no_agent=1
     while :; do sleep 3600; done
