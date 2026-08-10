@@ -103,6 +103,21 @@ if [ -z "$agent" ]; then
         echo "  AgentBus is not signed in on this machine yet."
         echo "  Sign in once:  agentbus signin <key>     then:  agentbus setup claude"
     fi
+    # SAY THAT WE ARE STOPPING, because the harness is about to say it for us.
+    #
+    # The operator saw this message land correctly and then, seconds later, a
+    # second event: 'Monitor "AgentBus inbox" stream ended ... no further
+    # AgentBus watching is active'. Nothing broke — that is Claude Code
+    # reporting that this process exited — but arriving unannounced it reads
+    # like a failure following a warning, and the session dutifully relayed it
+    # as one. Two notifications for one non-event, the second scarier than the
+    # first.
+    #
+    # We cannot suppress the harness's notice; we CAN stop it being a surprise.
+    # Announcing the exit costs one line and turns a second alarming event into
+    # a confirmation of what was just said.
+    echo "  This monitor is stopping now — there is nothing to watch until the"
+    echo "  project is wired. Re-open the session afterwards and it starts again."
     exit 0
 fi
 
