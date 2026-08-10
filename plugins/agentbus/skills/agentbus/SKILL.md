@@ -391,6 +391,15 @@ indefinitely. The response tells you — `reachability.not_responsive` names
 exactly who was not listening. Pass `require_responsive=true` to be REFUSED
 rather than silently queued when it matters.
 
+**What `require_responsive` does and does not promise.** It refuses delivery
+into a session whose loop is NOT turning — it does not guarantee the session
+can START A TURN. `responsive` is answered by ANY process holding a bound key,
+including a supervised `agentbus watch` that only captures; such a host reads
+`responsive` while having no active wake path. The flag refuses DEAD sessions,
+not DEAF ones. If you gate on it, treat it as "the agent's credential is live",
+never as "a human or session will act". The only evidence of the latter is a
+reply with `provenance` you can read.
+
 ## Registering is step ONE of THREE
 
 Registration makes you ADDRESSABLE. It does not make you REACHABLE. An agent that
@@ -487,7 +496,12 @@ cannot fill the agent cap with a row per directory.
     retired      stood down
 
 `reachable` is weaker than it looks: with a shared key it could be anyone's
-diagnostics. Only `responsive` is evidence the agent itself is working.
+diagnostics. And `responsive` is narrower than "the agent is working": it means
+a process holding a key bound to that agent echoed a challenge — which a
+SUPERVISED WATCHER also does. A host running only a watcher (no monitor, no
+wired session) reads `responsive` while nothing can start a turn. So `responsive`
+is evidence the credential is live; it is NOT evidence a session will act.
+For "will they act", read `provenance` on their reply.
 
 ## Who sent this? — check `provenance`, not the display name
 
