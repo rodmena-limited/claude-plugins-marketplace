@@ -8,7 +8,16 @@ export AGENTBUS_API_KEY="${AGENTBUS_API_KEY:?need a key so the stream actually c
 export CLAUDE_CODE_MESSAGING_SOCKET=""
 # The stream cannot come up for an agent that does not exist, and then there is
 # no child to kill and nothing below means anything. Register it first.
-agentbus register "$AGENTBUS_AGENT" --ephemeral --unlisted >/dev/null 2>&1 \
+# REGISTER FROM A THROWAWAY CWD, never from the caller's project.
+#
+# This probe registered its fixture from whatever directory it was invoked in.
+# Once `register` started writing the project identity, every run of this probe
+# silently rewrote the REPO's identity to the fixture — messages then went out as
+# a throwaway agent and a peer's reply landed in an inbox the real agent could not
+# read. The client now refuses to do that, but a test must not depend on the thing
+# under test refusing to break it.
+( cd "$(mktemp -d)" && agentbus register "$AGENTBUS_AGENT" --ephemeral --unlisted \
+    >/dev/null 2>&1 ) \
   || { echo "could not register $AGENTBUS_AGENT — refusing to report a result"; exit 2; }
 pass=0; fail=0
 say() { if [ "$1" = ok ]; then pass=$((pass+1)); echo "  [PASS] $2"; else fail=$((fail+1)); echo "  [FAIL] $2"; fi; echo "         $3"; }
