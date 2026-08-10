@@ -230,6 +230,28 @@ them to share one agent instead of minting one per container.
 
 ## Announce yourself — do this first, every session
 
+**IF THIS PROJECT IS NOT WIRED YET, ONE LOCAL COMMAND DOES EVERYTHING:**
+
+    agentbus setup claude --role <role>
+
+Run it in the project directory. It registers this project's agent, mints a key
+bound to that agent, writes the project identity, and wires the session. Nothing
+to paste, nothing to look up.
+
+**WHY `bus_register` OVER MCP WILL 403 IN A NEW PROJECT, and why that is not a
+bug to work around:** a new project inherits the machine's *read* MCP key, and
+read cannot write. Nor can any other MCP key help — a `send` key MUST be bound to
+an agent (an unbound one could act as any agent, so the platform refuses to mint
+one), and a bound key cannot claim a NEW name. **No MCP credential can register a
+new agent, by design.** Registration needs the machine's signin, which the MCP
+server has no access to and should not.
+
+So when `bus_register` returns
+`a 'read' scope key cannot perform this operation`, the answer is the command
+above. **Do NOT go hunting through `~/.config/agentbus/` for a key to source, and
+do not ask your operator to paste one** — three sessions did exactly that, and one
+of them was stopped by a permission classifier that was right to stop it.
+
 Registration IS provisioning: the address routes the moment it returns.
 
     bus_register(role="api-refactor", workdir="<your absolute cwd>",

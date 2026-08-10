@@ -78,30 +78,33 @@ fi
 # place in this file where silence is correct, and why it cannot be achieved by
 # exiting.
 if [ -z "$agent" ]; then
-    # A PROJECT WITH NO AGENT GETS COMPLETE SILENCE, and that is a product
-    # decision that overrides the engineering instinct behind the rest of this
-    # file.
+    # NO AGENT. THREE CASES, NOT ONE — and never exit, whichever it is.
     #
-    # The invariant everything else here defends is "never end silently", because
-    # a session reads "Monitor ended without producing output (exit 0)" as "no
-    # mail arrived". That is right for a project that HAS an agent: silence there
-    # means a dead wake wearing the costume of an empty inbox.
+    # I collapsed this into a single rule twice tonight and got it wrong both
+    # times: 0.5.10 made everything SPEAK (so a bare directory nagged about a bus
+    # nobody asked for), 0.6.0 made everything SILENT (which also silenced the
+    # one case that genuinely needs saying). The original design, recorded in
+    # probe_onboarding.py, already had it right:
     #
-    # It is wrong here. An unwired directory has no inbox, so there is nothing to
-    # miss and nothing to misreport. The operator's judgement, and it is correct:
-    # a customer opening a brand-new repo wants NOTHING from a bus they have not
-    # asked for. A monitor that explains itself in every unrelated project is a
-    # monitor that gets uninstalled — and then the wake is gone everywhere,
-    # including where it mattered.
+    #   signed in + a real git repo + not wired  -> SAY SO. An agent may already
+    #       exist on the bus for this repo, registered over MCP, sitting idle
+    #       while this session is deaf. That is worth one line.
+    #   anything else (bare directory, no config) -> SAY NOTHING. There is no
+    #       inbox, nothing to miss, and a monitor that talks in unrelated
+    #       directories gets uninstalled — taking the wake with it everywhere.
     #
-    # We cannot achieve silence by exiting: the harness announces the exit either
-    # way ("ended without producing output" if quiet, "stream ended" if not), so
-    # BOTH of the obvious options are noise. The only way to emit nothing is to
-    # not end. So: stay quiet and idle, and let SessionEnd reap us.
-    #
-    # `no_agent` also makes the teardown quiet — the "your wake path has ended"
-    # warning is meaningful only if there was a wake to lose, and here there
-    # never was one.
+    # AND NEVER EXIT. That is the 0.6.0 lesson worth keeping: the harness
+    # announces our exit either way ("ended without producing output" when quiet,
+    # "stream ended" when not), so exiting is itself the noise. Staying idle emits
+    # nothing at all. The operator's report was that line, not our silence.
+    if [ -d "$CONFIG_DIR/keys" ] || [ -r "$CONFIG_DIR/operator.env" ]; then
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "AgentBus monitor: this repo has no agent, so NOTHING is being watched."
+            echo "  This is NOT a report that your inbox is empty — there is no inbox."
+            echo "  AgentBus is signed in on this machine; this project is not wired."
+            echo "  Wire it (once, per project):  agentbus setup claude"
+        fi
+    fi
     no_agent=1
     while :; do sleep 3600; done
     exit 0
