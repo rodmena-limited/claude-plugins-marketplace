@@ -204,6 +204,36 @@ else
     STATE="$CONFIG_DIR/monitor-${agent}.json"
 fi
 
+# REFUSE A SECOND LIVE WATCHER FOR THE SAME AGENT (container-registry incident,
+# 2026-08-11). Two monitors on one identity each hold their own cursor and both
+# receive every SSE event, so one arrival fires --exec/inject TWICE (duplicate
+# wakes), and whichever session reads first hides the message from the other's
+# unread view — a swallowed message that looks exactly like an empty inbox.
+#
+# The check: is there a live watcher for this agent whose SESSION is not ours?
+# A handover is fine (the old session's watcher is gone, so the state file is
+# stale and unlinked by watch-status); a genuine second session is not. We
+# compare against the session id embedded in the state file, never against a
+# bare "any watcher" — otherwise the guard would fight the monitor's own
+# bounded restart loop.
+# DIAGNOSTIC TO STDOUT: Claude Code delivers monitor stdout to the session.
+if [ -n "$sid" ]; then
+    other_status=$(agentbus watch-status --agent "$agent" 2>/dev/null || true)
+    # watch-status lists EVERY live watcher with its state-keyed pid file name,
+    # e.g. "...container-registry-audit-e8826b-90f9ad69-b60c-...json.pid". If one
+    # names a session other than ours, another session is actively watching.
+    if printf '%s' "$other_status" | grep -qE -- "-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json\.pid" \
+        && ! printf '%s' "$other_status" | grep -q -- "-${sid}\.json\.pid"; then
+        echo "AgentBus monitor: another session is ALREADY watching agent '$agent'."
+        echo "  Two live watchers on one identity duplicate every wake and share"
+        echo "  read/ack state, so this monitor will NOT start a second one."
+        echo "  If the other session has ended, its watcher will be reaped and"
+        echo "  this monitor resumes on its next restart."
+        echo "  Nothing here checked your mail: agentbus inbox --unread"
+        exit 0
+    fi
+fi
+
 # Seed the cursor to the CURRENT END of the inbox before streaming. Without
 # this the watcher drains from a stale checkpoint and every backlogged message
 # is delivered to Claude as a notification — 34 of them on the first real test,
