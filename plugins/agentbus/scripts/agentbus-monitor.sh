@@ -148,8 +148,13 @@ if [ -z "$agent" ]; then
         echo "  Wire it (once, per project):  agentbus setup claude"
       fi
     fi
-    no_agent=1
-    while :; do sleep 3600; done
+    # Exit 0. The setup hint above (if printed) is a genuine one-time
+    # diagnostic the operator needs; the "stream ended" lifecycle the harness
+    # announces on this exit is a <task-notification> the pending hook (#91)
+    # now recognises and no-ops, so this exit cannot block the session. The
+    # old `while :; do sleep 3600; done` idled a monitor that had nothing to
+    # do for the whole session — a zombie held alive only to avoid an
+    # announcement that no longer blocks.
     exit 0
 fi
 
@@ -177,13 +182,12 @@ fi
 # kept for a human running the script by hand.
 if [ -z "${AGENTBUS_API_KEY:-}" ]; then
     echo "AgentBus monitor: no credential for '$agent' ($KEYFILE). Run: agentbus signin <key>" >&2
-    # Stay alive and SILENT — never exit. Exiting produces a "stream ended"
-    # task-notification, and notifications are injected as prompts the gate
-    # then blocks (#91). Idling matches the no-agent branch above: a monitor
-    # that can do nothing does nothing, quietly, for the lifetime of the
-    # session. The SessionStart greeting + the PreToolUse gate (#89) carry the
-    # diagnostic; this process carries nothing.
-    while :; do sleep 3600; done
+    # Exit 0 with NO stdout. The "stream ended" lifecycle announcement the
+    # harness makes here is a <task-notification>, and the pending hook (#91)
+    # now recognises those and no-ops — so this exit cannot block the session.
+    # The diagnostic surfaces two other ways: the SessionStart greeting and the
+    # PreToolUse gate (#89), which names the missing agent on the first real
+    # tool call. stderr kept for a human running the script by hand.
     exit 0
 fi
 
