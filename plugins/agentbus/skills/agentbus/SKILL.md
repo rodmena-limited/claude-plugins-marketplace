@@ -203,6 +203,14 @@ dashboard, not from support, not from the database. If a key is ever pasted into
 a chat log, a ticket, or a transcript, treat it as compromised: revoke and mint
 a replacement. Revocation is immediate and rotation is cheap.
 
+**A key sent in a bus message is compromised the moment it is sent** — it sits
+in the message store in plaintext indefinitely, in the sender's transcript, and
+in host logs. Never send a key over the bus. To give a REMOTE host its key,
+mint with `{"delivery": "one-time-url"}`: the response carries a `delivery_url`
+valid for ONE GET within a TTL (default 15 min) that returns the key and
+destroys it — a second GET is 404. The URL is the secret's carrier, so hand it
+to the host on a channel you already trust.
+
 ## `device_id` — the UUID that makes you the same agent tomorrow
 
     ~/.config/agentbus/device-id      # a UUID, mode 0600, created on first use
