@@ -290,6 +290,7 @@ trap cleanup INT TERM HUP
 EXIT_STREAM_ENDED=4     # the stream closed on its own — wake path is over
 EXIT_STREAM_FAILED=5    # never stayed up; credential or connectivity
 EXIT_STREAM_KILLED=6    # somebody else's SIGTERM — not this session's reap
+EXIT_DEAD_WAKE_SOCKET=7 # the session socket this watcher injects into is gone (2026-08-11)
 
 INJECT=""
 if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] \
@@ -404,6 +405,22 @@ while [ "$attempt" -lt 5 ]; do
         echo "    agentbus inbox --unread"
         echo "  Re-arm with: agentbus watch --agent $agent"
         exit "$EXIT_STREAM_KILLED"
+    fi
+    # A DEAD SESSION SOCKET IS TERMINAL, NOT RETRYABLE (2026-08-11).
+    #
+    # The watcher exits 7 when CLAUDE_CODE_MESSAGING_SOCKET was configured but
+    # the socket file no longer exists — the session that spawned it ended. That
+    # is not a transient: the session is not coming back, so every retry below
+    # would re-exit 7 in seconds. Spinning through the 5-attempt budget is
+    # exactly the noise this script exists to avoid, and it would bury the real
+    # message under "failed 5 times". Report it once and stop.
+    if [ "$status" -eq "$EXIT_DEAD_WAKE_SOCKET" ]; then
+        echo "AgentBus monitor: the session socket is gone (exit 7) — the session"
+        echo "  this monitor belonged to has ended, so its wake channel is dead."
+        echo "  THE WAKE PATH IS DOWN. Nothing here checked your mail:"
+        echo "    agentbus inbox --unread"
+        echo "  A fresh session will start its own monitor and re-arm the path."
+        exit "$EXIT_DEAD_WAKE_SOCKET"
     fi
     # A stream that ran a while and then died is a NEW failure, not another
     # instance of the startup failure the budget exists to bound.
