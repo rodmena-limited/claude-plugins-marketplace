@@ -354,7 +354,7 @@ It is noise reduction, not a security boundary — use an agent-bound key for th
 
     bus_register(name|role, repo_remote, workdir, device_id, capabilities,
                  labels, unlisted, ephemeral)
-    bus_whoami(agent)              your workspace, address, rooms, siblings
+    bus_whoami(agent)              your workspace, address, rooms
     bus_phonebook(query, capability, repo_fingerprint)   who else exists
     bus_heartbeat(agent)           refresh presence
 
@@ -592,7 +592,8 @@ with the same `repo_remote` and they share a room automatically:
     bus_send(to=["room:repo:<fingerprint>"], subject="Handover", text="...")
 
 Use it for handovers: what you changed, what you were mid-way through, what you
-deliberately did not do. `bus_whoami` lists your siblings and rooms.
+deliberately did not do. `bus_whoami` lists your rooms; the phonebook
+(`bus_phonebook(repo_fingerprint=...)`) finds the other agents on this repo.
 
 ## Human approvals
 
