@@ -162,10 +162,28 @@ if [ -r "$KEYFILE" ]; then
     set +a
 fi
 
-# No key anywhere: say so ONCE and stop. Exiting quietly here would
-# make "not signed in" indistinguishable from "nobody has written to you".
+# No key anywhere: STOP SILENTLY (no stdout). This line USED to go to stdout,
+# and the file's own header documents why: Claude Code delivers every stdout
+# line as a NOTIFICATION. But that delivery is also what made it a cascade
+# (#91, 2026-08-11): the notification was injected as a UserPromptSubmit
+# "prompt", the pending hook — which had the same missing credential — ran on
+# it and BLOCKED the prompt, and the operator saw "operation blocked by hook"
+# for a message they never typed. The product ate its own diagnostic.
+#
+# So a monitor with no credential says NOTHING to stdout and exits: no
+# notification, no injected prompt, no block. The diagnostic still surfaces two
+# other ways — the SessionStart greeting, and the PreToolUse gate (#89) which
+# names the missing agent the moment a real tool call is attempted. stderr is
+# kept for a human running the script by hand.
 if [ -z "${AGENTBUS_API_KEY:-}" ]; then
-    echo "AgentBus monitor: no credential for '$agent' ($KEYFILE). Run: agentbus signin <key>"
+    echo "AgentBus monitor: no credential for '$agent' ($KEYFILE). Run: agentbus signin <key>" >&2
+    # Stay alive and SILENT — never exit. Exiting produces a "stream ended"
+    # task-notification, and notifications are injected as prompts the gate
+    # then blocks (#91). Idling matches the no-agent branch above: a monitor
+    # that can do nothing does nothing, quietly, for the lifetime of the
+    # session. The SessionStart greeting + the PreToolUse gate (#89) carry the
+    # diagnostic; this process carries nothing.
+    while :; do sleep 3600; done
     exit 0
 fi
 
