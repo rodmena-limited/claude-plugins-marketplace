@@ -167,27 +167,15 @@ if [ -r "$KEYFILE" ]; then
     set +a
 fi
 
-# No key anywhere: STOP SILENTLY (no stdout). This line USED to go to stdout,
-# and the file's own header documents why: Claude Code delivers every stdout
-# line as a NOTIFICATION. But that delivery is also what made it a cascade
-# (#91, 2026-08-11): the notification was injected as a UserPromptSubmit
-# "prompt", the pending hook — which had the same missing credential — ran on
-# it and BLOCKED the prompt, and the operator saw "operation blocked by hook"
-# for a message they never typed. The product ate its own diagnostic.
-#
-# So a monitor with no credential says NOTHING to stdout and exits: no
-# notification, no injected prompt, no block. The diagnostic still surfaces two
-# other ways — the SessionStart greeting, and the PreToolUse gate (#89) which
-# names the missing agent the moment a real tool call is attempted. stderr is
-# kept for a human running the script by hand.
+# No key anywhere: STOP WITH A DIAGNOSTIC. This line was previously moved to
+# stderr (and thus hidden from the user) because of a bug in the pending hook
+# that caused it to block the session if it received a task notification. Now
+# that the pending hook properly no-ops task notifications (#91 fixed), we can
+# safely print this to stdout so the user actually knows WHY the monitor stopped.
 if [ -z "${AGENTBUS_API_KEY:-}" ]; then
-    echo "AgentBus monitor: no credential for '$agent' ($KEYFILE). Run: agentbus signin <key>" >&2
-    # Exit 0 with NO stdout. The "stream ended" lifecycle announcement the
-    # harness makes here is a <task-notification>, and the pending hook (#91)
-    # now recognises those and no-ops — so this exit cannot block the session.
-    # The diagnostic surfaces two other ways: the SessionStart greeting and the
-    # PreToolUse gate (#89), which names the missing agent on the first real
-    # tool call. stderr kept for a human running the script by hand.
+    echo "AgentBus monitor: no credential for '$agent' ($KEYFILE). Run: agentbus signin <key>"
+    # Exit 0 so the harness treats it as a normal end, not a crash. The diagnostic
+    # above will be delivered as a notification.
     exit 0
 fi
 
