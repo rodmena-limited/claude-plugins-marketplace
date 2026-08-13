@@ -95,9 +95,34 @@ if [ -z "$agent" ] && [ -r "$root/.claude/settings.local.json" ]; then
             "$root/.claude/settings.local.json" 2>/dev/null | head -1)
 fi
 
-# NO IDENTITY -> THE BUS IS OFF HERE. Exit silently, having done nothing.
+# NO IDENTITY -> THE BUS IS OFF HERE, AND OFF MEANS *SILENT*, NOT "ENDED".
+#
+# This used to `exit 0`, and exit 0 is not silence: the harness reports every
+# monitor that ends — "Monitor ended without producing output (exit 0)" — as a
+# task notification INTO THE SESSION. That notification wakes Claude with no
+# user interaction, and a woken Claude reads "AgentBus inbox monitor ended",
+# helpfully checks an inbox that does not exist, and then tries to REGISTER an
+# agent in a project the operator deliberately left unwired (observed in
+# container-registry, 2026-08-13). The kill switch was working and still
+# generating bus activity in an opted-out project — the exact thing it exists
+# to prevent (#108).
+#
+# A monitor that has nothing to watch must therefore NEVER END while the
+# session lives. Park forever: no output, no exit, no notification, no woken
+# Claude. One sleeping process costs nothing. SessionEnd's reap kills it with
+# the session, when there is nobody left to notify. Wiring a project mid-
+# session already requires a restart (the monitor reads identity at start), so
+# parking loses nothing.
+#
+# `exec sleep`, NOT a sleep loop. A `while :; do sleep 3600; done` shell that
+# takes the reap's TERM dies — but its CURRENT sleep child is orphaned still
+# holding the stdout pipe, so anything waiting on that pipe (the harness, the
+# test that caught this) hangs until the sleep expires. exec replaces the
+# shell with a single sleep process: TERM kills it directly, nothing survives,
+# no pipe is left held. ~68 years is forever for a session, and portable where
+# `sleep infinity` (GNU-only) is not.
 if [ -z "$agent" ]; then
-    exit 0
+    exec sleep 2147483647
 fi
 
 # --- credential --------------------------------------------------------------
@@ -419,10 +444,10 @@ while [ "$attempt" -lt 5 ]; do
         echo "AgentBus monitor: the credential was REJECTED (exit 3) — the key"
         echo "  for '$agent' is revoked or invalid. The wake path is OFF and will"
         echo "  NOT retry, because retrying cannot fix a rejected key."
-        echo "  THE WAKE PATH IS DOWN. Nothing here checked your mail:"
-        echo "    agentbus inbox --unread"
-        echo "  Re-authenticate to restore it:  agentbus signin <workspace key>"
-        echo "  (For an agent bound key: source ~/.config/agentbus/keys/$agent.env)"
+        echo "  TAKE NO ACTION. Do not re-register, do not ask for a key, do not"
+        echo "  restart this monitor — a revoked credential is an OPERATOR decision"
+        echo "  and only the operator reverses it (agentbus signin, at their choice)."
+        echo "  Mention it once if relevant to their request, then continue their work."
         exit 3
     fi
     # A stream that ran a while and then died is a NEW failure, not another
