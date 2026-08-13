@@ -37,8 +37,22 @@ pass=0; fail=0
 say() { if [ "$1" = ok ]; then pass=$((pass+1)); printf '  [PASS] %s\n         %s\n' "$2" "$3"
         else fail=$((fail+1)); printf '  [FAIL] %s\n         %s\n' "$2" "$3"; fi; }
 
-# For an UNWIRED project: assert TOTAL SILENCE and that it did not end. Run it
-# under a timeout — a clean timeout kill (124) is the proof it stayed alive.
+# For an UNWIRED project: assert TOTAL SILENCE, and that it EXITS rather than
+# idling.
+#
+# THE EXIT ASSERTION REVERSED ON 2026-08-13, and the reversal is the point of the
+# kill switch. This probe used to demand rc=124 — proof the monitor stayed alive
+# — because an exit made the harness announce "stream ended", and that
+# announcement was itself noise. Two things changed:
+#
+#   * #91 made the pending hook recognise and no-op harness task-notifications,
+#     so the exit announcement no longer reaches or blocks a session;
+#   * holding a process open for the entire session in every unwired directory
+#     on the machine is a real cost paid for nothing. There is no inbox, no
+#     credential and no stream — there is nothing for it to stay alive FOR.
+#
+# So the rule is now the simplest one available: no identity, no AgentBus. Emit
+# nothing, do nothing, exit 0 immediately.
 run_quiet_case() {
     name="$1"; shift
     out=$(mktemp); tmphome=$(mktemp -d)
@@ -47,11 +61,13 @@ run_quiet_case() {
     rc=$?
     bytes=$(wc -c < "$out")
     if [ "$bytes" -ne 0 ]; then
-        say fail "$name (must be SILENT)" "emitted ${bytes}B — a customer in a new repo wants nothing: $(head -1 "$out")"
-    elif [ "$rc" -ne 124 ]; then
-        say fail "$name (must be SILENT)" "exited rc=$rc instead of staying idle — the harness will announce the exit, which is the noise we are removing"
+        say fail "$name (must be SILENT)" "emitted ${bytes}B — a project that never opted in wants nothing: $(head -1 "$out")"
+    elif [ "$rc" -eq 124 ]; then
+        say fail "$name (must be SILENT)" "still running after 8s — an unwired directory must not hold a process open for the session"
+    elif [ "$rc" -ne 0 ]; then
+        say fail "$name (must be SILENT)" "exited rc=$rc; 'not wired' is a normal state and must exit 0"
     else
-        say ok "$name (must be SILENT)" "no output, still running: the harness has nothing to announce"
+        say ok "$name (must be SILENT)" "no output, exit 0: the bus is off in this directory"
     fi
     rm -rf "$tmphome"; rm -f "$out"
 }
@@ -112,6 +128,53 @@ else
         "refused to guess an identity; took the no-agent path"
 fi
 rm -rf "$leakhome" "$leakdir"; rm -f "$leakout"
+
+echo
+echo "=== the kill switch, both directions ==="
+
+# THE POSITIVE CONTROL COMES FIRST, DELIBERATELY. Every silence assertion above
+# is worthless unless this monitor is capable of speaking in the first place —
+# a script that exits 1 on line 3 passes every "must be SILENT" case perfectly.
+kshome=$(mktemp -d); mkdir -p "$kshome/.config/agentbus/keys"
+ksdir=$(mktemp -d); ( cd "$ksdir" && git init -q . )
+
+mkdir -p "$ksdir/.agentbus"; printf 'worktree-probe-agent\n' > "$ksdir/.agentbus/agent"
+ksout=$( cd "$ksdir" && env HOME="$kshome" AGENTBUS_CONFIG_DIR="$kshome/.config/agentbus" \
+    AGENTBUS_AGENT= AGENTBUS_API_KEY= CLAUDE_CODE_MESSAGING_SOCKET= \
+    timeout 15 sh "$MON" 2>/dev/null )
+if printf '%s' "$ksout" | grep -q "worktree-probe-agent"; then
+    say ok "ON: .agentbus/agent activates the bus" \
+        "resolved the worktree's declared identity and proceeded"
+else
+    say fail "ON: .agentbus/agent activates the bus" \
+        "declared an identity and the monitor still did nothing — the switch is stuck OFF, which would make every silence assertion above vacuous"
+fi
+
+# The env var must beat the file, or the hooks and the monitor can disagree (#90).
+ksout=$( cd "$ksdir" && env HOME="$kshome" AGENTBUS_CONFIG_DIR="$kshome/.config/agentbus" \
+    AGENTBUS_AGENT=env-probe-agent AGENTBUS_API_KEY= CLAUDE_CODE_MESSAGING_SOCKET= \
+    timeout 15 sh "$MON" 2>/dev/null )
+if printf '%s' "$ksout" | grep -q "env-probe-agent"; then
+    say ok "PRECEDENCE: \$AGENTBUS_AGENT outranks .agentbus/agent" \
+        "env won, matching the hooks' resolution order"
+else
+    say fail "PRECEDENCE: \$AGENTBUS_AGENT outranks .agentbus/agent" \
+        "the file overrode the operator's env export — this is #90, two identities in one session"
+fi
+
+# And OFF: remove the declaration, same directory, same machine.
+rm -rf "$ksdir/.agentbus"
+ksout=$( cd "$ksdir" && env HOME="$kshome" AGENTBUS_CONFIG_DIR="$kshome/.config/agentbus" \
+    AGENTBUS_AGENT= AGENTBUS_API_KEY= CLAUDE_CODE_MESSAGING_SOCKET= \
+    timeout 15 sh "$MON" 2>/dev/null )
+if [ -z "$ksout" ]; then
+    say ok "OFF: removing the identity silences the bus" \
+        "same repo, same machine, no declaration: nothing emitted"
+else
+    say fail "OFF: removing the identity silences the bus" \
+        "still spoke without any declared identity: $(printf '%s' "$ksout" | head -1)"
+fi
+rm -rf "$kshome" "$ksdir"
 
 echo
 echo "$pass passed, $fail failed"

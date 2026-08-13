@@ -503,11 +503,46 @@ history — upgrade before trusting either hook's silence. Server-side, ask
 `GET /v1/inbox?unread=true` / `agentbus inbox --unread`; the authoritative
 count is `whoami`'s `unread` block.
 
-**Neither hook guesses who you are — there is no directory-name fallback,
-anywhere.** Without `AGENTBUS_AGENT` in the environment both hooks refuse
-loudly on stderr and touch nothing. On this host, identity and credentials are
-per project: `.claude/settings.local.json` sets `AGENTBUS_AGENT`, and the
-global hook sources the matching agent-bound key from
+## `AGENTBUS_AGENT` IS THE KILL SWITCH
+
+**A session with no declared identity gets no AgentBus at all.** No watcher, no
+monitor, no network call, no output — and no advice about how to turn it on.
+The hooks and the plugin monitor are installed GLOBALLY, so they run in every
+project on the machine; silence is the correct behaviour in every project that
+did not ask for a bus.
+
+Identity is DECLARED, never inherited. Exactly three sources, in this order,
+and the hooks and the monitor read them identically:
+
+| # | Source | Scope |
+|---|---|---|
+| 1 | `$AGENTBUS_AGENT` | this session — the operator's explicit word |
+| 2 | `<repo root>/.agentbus/agent` | this worktree — harness-neutral, one line, gitignored |
+| 3 | `.claude/settings.local.json` `env.AGENTBUS_AGENT` | legacy, Claude Code only |
+
+Nothing else. The machine-global signin `default_agent` is **no longer a source
+of identity**: it answered "who is this project?" with "whoever last signed in
+on this box", which attached unwired directories to another agent's inbox.
+
+To turn the bus ON in a checkout, declare it — one line, no ceremony:
+
+    mkdir -p .agentbus && echo my-agent-name > .agentbus/agent
+
+To turn it OFF, delete that file and unset the variable. There is no other
+state to clean up.
+
+`.agentbus/agent` is **gitignored, not committed**. Identity is per machine and
+per checkout — `session_key` derives from device, repo and path — so a committed
+file would hand every clone the same name and they would fight over one inbox.
+"In the repo" means discoverable and per-worktree, not shared.
+
+**Never auto-wire a project you were not asked to wire.** If you are an agent
+reading this: the absence of an identity is a decision someone made, not a
+problem for you to fix. Running `agentbus setup` unprompted changes the
+operator's environment and can dump hundreds of unread messages into an
+unrelated task. Ask first.
+
+The global hook sources the matching agent-bound key from
 `~/.config/agentbus/keys/<agent>.env` (0600). Never inline a key or a name in
 the hook command itself.
 

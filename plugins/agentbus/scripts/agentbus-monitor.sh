@@ -42,119 +42,54 @@ set -u
 CONFIG_DIR="${AGENTBUS_CONFIG_DIR:-$HOME/.config/agentbus}"
 
 # --- who is this project's agent? -------------------------------------------
+#
+# AGENTBUS_AGENT IS THE KILL SWITCH. No identity, no AgentBus — no watcher, no
+# network call, no output, nothing. Operator directive, 2026-08-13, after this
+# monitor announced itself in a session that had deliberately not opted in and
+# talked the assistant into wiring the project mid-task.
+#
+# Identity comes from exactly TWO places, both of which somebody chose on
+# purpose, and they are tried in this order:
+#
+#   1. $AGENTBUS_AGENT              — the operator's word for this session
+#   2. .agentbus/agent in the repo  — the worktree's own declaration
+#
+# and from NOWHERE ELSE. What is deliberately gone:
+#
+#   * the machine-global signin default_agent. It attached UNWIRED directories
+#     to whoever this machine last signed in as — bob reproduced a scratch
+#     directory streaming david's inbox to cursor 474, and the "it announces
+#     itself" mitigation only made a cross-agent mail leak legible, not correct.
+#     The in-repo file below is what david needed all along: an explicit
+#     identity that survives a reopened session without guessing.
+#
+#   * the setup nag. A monitor that tells an unwired project how to wire itself
+#     is not a diagnostic, it is a prompt — and an agent reading its own
+#     notifications treats it as an instruction. Silence is the correct output
+#     for "this project did not ask for a bus".
+#
+# The precedence matches sdk/agentbus_client/hooks/claude_code.py exactly. It
+# has to: #90 was the hooks following one source and the monitor another, after
+# which the session held two identities at once and each half looked fine.
 agent="${AGENTBUS_AGENT:-}"
 
+if [ -z "$agent" ]; then
+    root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    if [ -r "$root/.agentbus/agent" ]; then
+        agent=$(tr -d ' \t\r\n' < "$root/.agentbus/agent" 2>/dev/null | head -1)
+    fi
+fi
+
+# LEGACY, and only for Claude Code: projects wired before .agentbus/agent
+# existed declared themselves here. Still honoured so an upgrade does not
+# silently deafen a working session; `agentbus setup` now writes both.
 if [ -z "$agent" ] && [ -r ".claude/settings.local.json" ]; then
     agent=$(sed -n 's/.*"AGENTBUS_AGENT"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
             .claude/settings.local.json 2>/dev/null | head -1)
 fi
 
-# THE MACHINE-GLOBAL default_agent FALLBACK: REMOVED IN 0.5.13, RESTORED IN 0.6.4.
-# The full reasoning is at the fallback itself, below. In short: bob reproduced a
-# real cross-agent leak with it (an unwired scratch directory streaming david's
-# inbox to cursor 474), so it was deleted — and the deletion parked david's own
-# monitor on `sleep 3600`, silent and unreportable, because he IS this machine's
-# default and his directory was never wired. It is back, and it now ANNOUNCES
-# whose mail it is watching, which is what makes the leak survivable.
-
-# NO AGENT -> COMPLETE SILENCE. See the branch body for why this is the one
-# place in this file where silence is correct, and why it cannot be achieved by
-# exiting.
+# NO IDENTITY -> THE BUS IS OFF HERE. Exit silently, having done nothing.
 if [ -z "$agent" ]; then
-    # NO AGENT. THREE CASES, NOT ONE — and never exit, whichever it is.
-    #
-    # I collapsed this into a single rule twice tonight and got it wrong both
-    # times: 0.5.10 made everything SPEAK (so a bare directory nagged about a bus
-    # nobody asked for), 0.6.0 made everything SILENT (which also silenced the
-    # one case that genuinely needs saying). The original design, recorded in
-    # probe_onboarding.py, already had it right:
-    #
-    #   signed in + a real git repo + not wired  -> SAY SO. An agent may already
-    #       exist on the bus for this repo, registered over MCP, sitting idle
-    #       while this session is deaf. That is worth one line.
-    #   anything else (bare directory, no config) -> SAY NOTHING. There is no
-    #       inbox, nothing to miss, and a monitor that talks in unrelated
-    #       directories gets uninstalled — taking the wake with it everywhere.
-    #
-    # AND NEVER EXIT. That is the 0.6.0 lesson worth keeping: the harness
-    # announces our exit either way ("ended without producing output" when quiet,
-    # "stream ended" when not), so exiting is itself the noise. Staying idle emits
-    # nothing at all. The operator's report was that line, not our silence.
-    # THE MACHINE DEFAULT IS BACK, AS A LAST RESORT THAT ANNOUNCES ITSELF.
-    #
-    # I deleted this fallback tonight because bob reproduced a real cross-agent
-    # leak with it: an unwired scratch directory attached to david's stream and
-    # reached cursor 474. The leak was real and the deletion looked correct.
-    #
-    # It also killed david. He IS this machine's default, his directory has never
-    # been wired, and his wake path had been running on this fallback the whole
-    # time. bob then verified the consequence: pgrep -P <monitor> showed one child,
-    # `sleep 3600`. No watcher. Fourteen minutes parked, silent, while his harness
-    # reported a healthy running monitor — and he could not report it himself,
-    # because the symptom IS not waking.
-    #
-    # "Remove a fallback" and "who is relying on that fallback" are two questions
-    # and only the first got asked. So the rule now weighs the two failures:
-    #
-    #   attach to the wrong agent  -> wrong, but VISIBLE: it says whose mail it is
-    #                                 watching, so an operator kills it in seconds.
-    #   attach to nobody           -> SILENT, total, and unreportable by its victim.
-    #
-    # Visible-and-wrong beats silent-and-dead, so the fallback stays and pays for
-    # itself with three lines naming exactly what it did. The real cure is wiring
-    # at registration time (`agentbus register` now claims the project identity),
-    # which makes this path rare rather than load-bearing.
-    if [ -r "$CONFIG_DIR/signin.json" ]; then
-        agent=$(sed -n 's/.*"default_agent"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-                "$CONFIG_DIR/signin.json" 2>/dev/null | head -1)
-    fi
-    if [ -n "$agent" ]; then
-        echo "AgentBus monitor: this project is not wired, so it is watching as '$agent'," \
-             "this machine's signed-in default."
-        echo "  If '$agent' is not the right agent HERE, that agent's mail is being consumed"
-        echo "  in this session. Wire this project:  agentbus setup claude --role <role>"
-    fi
-fi
-
-if [ -z "$agent" ]; then
-    # NO agent and NO machine default. Say so if the machine is signed in at all —
-    # and note what is NOT guarding this any more.
-    #
-    # THE GIT-WORK-TREE GUARD STAYS HERE, AND david IS STILL FIXED. Both, and the
-    # reasoning matters because I got it wrong in 0.6.4 by removing it.
-    #
-    # Two rules were in genuine conflict:
-    #   R1  a monitor that talks in unrelated directories gets uninstalled,
-    #       taking the wake with it everywhere. A bare directory says nothing.
-    #   R2  a signed-in machine must never park silently — that killed david.
-    #
-    # Removing this guard served R2 by breaking R1: with it gone, every non-repo
-    # directory on a signed-in machine nagged about a bus nobody asked for, and
-    # probe_onboarding's "a non-repo directory stays silent" caught it in the
-    # deploy gate.
-    #
-    # The resolution is that david never needed THIS branch. His machine has a
-    # default_agent, so he takes the fallback above: it ATTACHES and announces,
-    # which both wakes him and says whose mail it is watching. This branch is only
-    # reached when there is no project identity AND no machine default — i.e.
-    # there is no agent to watch and nothing to miss. Silence is correct there,
-    # and the git check is what distinguishes "your project, not wired" (worth one
-    # line) from "some directory you happened to cd into" (worth nothing).
-    if [ -d "$CONFIG_DIR/keys" ] || [ -r "$CONFIG_DIR/operator.env" ]; then
-      if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        echo "AgentBus monitor: this repo has no agent, so NOTHING is being watched."
-        echo "  This is NOT a report that your inbox is empty — there is no inbox."
-        echo "  AgentBus is signed in on this machine; this project is not wired."
-        echo "  Wire it (once, per project):  agentbus setup claude"
-      fi
-    fi
-    # Exit 0. The setup hint above (if printed) is a genuine one-time
-    # diagnostic the operator needs; the "stream ended" lifecycle the harness
-    # announces on this exit is a <task-notification> the pending hook (#91)
-    # now recognises and no-ops, so this exit cannot block the session. The
-    # old `while :; do sleep 3600; done` idled a monitor that had nothing to
-    # do for the whole session — a zombie held alive only to avoid an
-    # announcement that no longer blocks.
     exit 0
 fi
 
