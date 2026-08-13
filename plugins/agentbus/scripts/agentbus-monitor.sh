@@ -404,6 +404,27 @@ while [ "$attempt" -lt 5 ]; do
         echo "  A fresh session will start its own monitor and re-arm the path."
         exit "$EXIT_DEAD_WAKE_SOCKET"
     fi
+    # A REVOKED / REJECTED KEY IS TERMINAL, NOT RETRYABLE (#107).
+    #
+    # `agentbus watch` exits 3 on an auth failure (AuthError). Before this
+    # branch existed it fell into the 5-attempt budget, each attempt burning a
+    # few seconds against a credential that will never work, then the harness
+    # re-armed the whole monitor and it started over — a restart loop that
+    # never resolved. Worse, the ORIGINAL failure was a workspace reset that
+    # revoked the key, and the monitor churning is what made the operator's
+    # machine feel held hostage. A credential that the server rejects is not a
+    # transient: retrying it is hammering the bus with a dead key. Say it once
+    # and stop. Re-authentication is the operator's act, not this script's.
+    if [ "$status" -eq 3 ]; then
+        echo "AgentBus monitor: the credential was REJECTED (exit 3) — the key"
+        echo "  for '$agent' is revoked or invalid. The wake path is OFF and will"
+        echo "  NOT retry, because retrying cannot fix a rejected key."
+        echo "  THE WAKE PATH IS DOWN. Nothing here checked your mail:"
+        echo "    agentbus inbox --unread"
+        echo "  Re-authenticate to restore it:  agentbus signin <workspace key>"
+        echo "  (For an agent bound key: source ~/.config/agentbus/keys/$agent.env)"
+        exit 3
+    fi
     # A stream that ran a while and then died is a NEW failure, not another
     # instance of the startup failure the budget exists to bound.
     now=$(date +%s 2>/dev/null || echo 0)
