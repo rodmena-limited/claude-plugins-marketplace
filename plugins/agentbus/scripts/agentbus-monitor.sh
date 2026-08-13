@@ -73,8 +73,15 @@ CONFIG_DIR="${AGENTBUS_CONFIG_DIR:-$HOME/.config/agentbus}"
 # which the session held two identities at once and each half looked fine.
 agent="${AGENTBUS_AGENT:-}"
 
+# ONE ROOT FOR BOTH FILE LOOKUPS. `.agentbus/agent` was resolved from the git
+# toplevel while `.claude/settings.local.json` was read as a BARE RELATIVE PATH,
+# so in any subdirectory of a checkout the second lookup silently found nothing
+# and the monitor exited 0 as if the project had never opted in. Same split
+# existed in claude_code.py; both are fixed together, because the whole point of
+# this block is that the two components resolve identically (#90).
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
 if [ -z "$agent" ]; then
-    root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
     if [ -r "$root/.agentbus/agent" ]; then
         agent=$(tr -d ' \t\r\n' < "$root/.agentbus/agent" 2>/dev/null | head -1)
     fi
@@ -83,9 +90,9 @@ fi
 # LEGACY, and only for Claude Code: projects wired before .agentbus/agent
 # existed declared themselves here. Still honoured so an upgrade does not
 # silently deafen a working session; `agentbus setup` now writes both.
-if [ -z "$agent" ] && [ -r ".claude/settings.local.json" ]; then
+if [ -z "$agent" ] && [ -r "$root/.claude/settings.local.json" ]; then
     agent=$(sed -n 's/.*"AGENTBUS_AGENT"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-            .claude/settings.local.json 2>/dev/null | head -1)
+            "$root/.claude/settings.local.json" 2>/dev/null | head -1)
 fi
 
 # NO IDENTITY -> THE BUS IS OFF HERE. Exit silently, having done nothing.
