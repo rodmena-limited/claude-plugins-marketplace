@@ -431,24 +431,28 @@ while [ "$attempt" -lt 5 ]; do
     fi
     # A REVOKED / REJECTED KEY IS TERMINAL, NOT RETRYABLE (#107).
     #
-    # `agentbus watch` exits 3 on an auth failure (AuthError). Before this
-    # branch existed it fell into the 5-attempt budget, each attempt burning a
-    # few seconds against a credential that will never work, then the harness
-    # re-armed the whole monitor and it started over — a restart loop that
-    # never resolved. Worse, the ORIGINAL failure was a workspace reset that
-    # revoked the key, and the monitor churning is what made the operator's
-    # machine feel held hostage. A credential that the server rejects is not a
-    # transient: retrying it is hammering the bus with a dead key. Say it once
-    # and stop. Re-authentication is the operator's act, not this script's.
-    if [ "$status" -eq 3 ]; then
-        echo "AgentBus monitor: the credential was REJECTED (exit 3) — the key"
+    # `agentbus watch` exits 8 on an auth failure (AuthError) — a DEDICATED
+    # code, split from 3 (generic AgentBusError) because 3 also covers
+    # TransportError: bus down, DNS loss, connection refused. Those are
+    # transient and MUST stay retryable, or a bus reload would permanently
+    # kill every wake path on the host. The wake-chain probe caught exactly
+    # that conflation: its black-hole test (unreachable bus) hit the terminal
+    # branch and the monitor stopped saying the inbox was unchecked.
+    #
+    # Before this branch existed a rejected key fell into the 5-attempt
+    # budget, burning retries against a credential that will never work, then
+    # the harness re-armed the monitor and it started over — the churn that
+    # made the operator's machine feel held hostage. A rejection is an answer.
+    # Say it once and stop. Re-authentication is the operator's act.
+    if [ "$status" -eq 8 ]; then
+        echo "AgentBus monitor: the credential was REJECTED (exit 8) — the key"
         echo "  for '$agent' is revoked or invalid. The wake path is OFF and will"
         echo "  NOT retry, because retrying cannot fix a rejected key."
         echo "  TAKE NO ACTION. Do not re-register, do not ask for a key, do not"
         echo "  restart this monitor — a revoked credential is an OPERATOR decision"
         echo "  and only the operator reverses it (agentbus signin, at their choice)."
         echo "  Mention it once if relevant to their request, then continue their work."
-        exit 3
+        exit 8
     fi
     # A stream that ran a while and then died is a NEW failure, not another
     # instance of the startup failure the budget exists to bound.
