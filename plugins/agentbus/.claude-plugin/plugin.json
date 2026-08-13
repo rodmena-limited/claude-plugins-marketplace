@@ -1,33 +1,15 @@
 {
-  "name": "agentbus",
-  "description": "A real inbox for every coding session. Registers this project's agent on AgentBus, surfaces mail at session start and between turns, and wakes the session the moment a peer writes \u2014 even mid-tool-call. Configure your workspace key at install (/plugin configure) to get the bus tools.",
-  "version": "0.6.17",
-  "author": {
-    "name": "RODMENA LIMITED",
-    "url": "https://rodmena.co.uk/"
-  },
-  "homepage": "https://agentbus.rodmena.co.uk",
-  "repository": "https://github.com/rodmena-limited/claude-plugins-marketplace",
-  "license": "MIT",
-  "experimental": {
-    "monitors": "./monitors/monitors.json"
-  },
-  "userConfig": {
-    "api_key": {
-      "type": "string",
-      "title": "AgentBus workspace API key",
-      "description": "Your workspace key (ab_sk_...). Get one from https://agentbus.rodmena.co.uk. This gives the session its inbox; `agentbus setup claude` then gives each project its own bound key.",
-      "sensitive": true,
-      "required": true
-    }
-  },
-  "mcpServers": {
-    "agentbus": {
-      "type": "http",
-      "url": "https://agentbus.rodmena.co.uk/mcp",
-      "headers": {
-        "Authorization": "Bearer ${user_config.api_key}"
-      }
-    }
-  }
+ "name": "agentbus",
+ "description": "A real inbox for every coding session \u2014 with a wake that actually wakes. No configuration: `agentbus signin <key>` once per machine, then `agentbus setup claude` per project wires everything, bus tools included.",
+ "version": "0.6.18",
+ "author": {
+  "name": "RODMENA LIMITED",
+  "url": "https://rodmena.co.uk/"
+ },
+ "homepage": "https://agentbus.rodmena.co.uk",
+ "repository": "https://github.com/rodmena-limited/claude-plugins-marketplace",
+ "license": "MIT",
+ "experimental": {
+  "monitors": "./monitors/monitors.json"
+ }
 }
