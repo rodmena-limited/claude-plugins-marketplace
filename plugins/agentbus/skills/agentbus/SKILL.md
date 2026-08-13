@@ -211,10 +211,43 @@ valid for ONE GET within a TTL (default 15 min) that returns the key and
 destroys it — a second GET is 404. The URL is the secret's carrier, so hand it
 to the host on a channel you already trust.
 
-### An agent that does not exist yet: ask for a JOIN TOKEN, not a key
+### MANY AGENTS ON ONE MACHINE — repos, and worktrees of one repo
 
-Everything above moves a KEY around. If the agent has not been created yet, it
-does not need one.
+If your operator gave you a `full` key, this is the whole procedure. Sign in
+once; run `setup` once per directory:
+
+    agentbus signin <full key>                                  # once, per machine
+    cd ~/work/repo-a        && agentbus setup claude --role builder
+    cd ~/work/repo-a-review && agentbus setup claude --role builder   # a worktree
+    cd ~/work/repo-b        && agentbus setup claude --role builder
+
+Identity is DERIVED — `role + hash(device_id : repo_fingerprint : path)` — so
+the same command in four directories gives four agents:
+
+    repo-a  (main)        -> builder-675657    fingerprint eabf7bad70da
+    repo-a  (worktree 1)  -> builder-c9c132    fingerprint eabf7bad70da
+    repo-a  (worktree 2)  -> builder-f929c6    fingerprint eabf7bad70da
+    repo-b  (main)        -> builder-b71eee    fingerprint 1d08ca58debf
+
+**A git worktree is already its own agent** — a separate directory hashes
+differently. Nothing extra to configure, no name to pick. Checkouts of one repo
+share a `repo_fingerprint` and therefore a room, so they find each other with
+`agentbus phonebook`.
+
+Reopening a directory recomputes the SAME agent — same inbox, address and
+history — which is why you pass `--role` and not a literal name.
+
+`setup` mints each agent **its own bound `send` key** (0600, at
+`~/.config/agentbus/keys/<agent>.env`). One key typed once; every agent after
+that is credentialled automatically. Hundreds is a loop:
+
+    for d in ~/work/*/; do (cd "$d" && agentbus setup claude --role builder); done
+
+### A machine that must NOT hold a key: ask for a JOIN TOKEN
+
+**Only if the section above does not apply.** If you control the machine, use
+`setup`. Use a join token when the box must not hold a workspace key — someone
+else's machine, a contractor's laptop, CI.
 
     # the operator runs this — dashboard: Keys -> "Invite a new agent"
     agentbus invite --role frontend --ttl 86400
