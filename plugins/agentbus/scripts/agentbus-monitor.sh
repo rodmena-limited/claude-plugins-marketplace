@@ -134,22 +134,27 @@ if [ -r "$KEYFILE" ]; then
     set +a
 fi
 
-# No key anywhere: STOP WITH A DIAGNOSTIC. This line was previously moved to
-# stderr (and thus hidden from the user) because of a bug in the pending hook
-# that caused it to block the session if it received a task notification. Now
-# that the pending hook properly no-ops task notifications (#91 fixed), we can
-# safely print this to stdout so the user actually knows WHY the monitor stopped.
+# No key anywhere: PARK, SILENTLY — the same treatment as no identity (#118).
+#
+# This branch used to print "Run: agentbus signin <key>" and exit. Every word
+# of that was a mistake, learned three times over one day:
+#   * the reader of monitor stdout is a WOKEN CLAUDE, which relays instructions
+#     to the operator as action requests — the ransom shape (#107/#108);
+#   * exit 0 is not silence: the harness reports every ended monitor INTO the
+#     session and wakes it (#108);
+#   * a declared identity with a missing key file is indistinguishable, from
+#     out here, from an operator MID-OPT-OUT deleting AgentBus piece by piece —
+#     which is exactly what was happening when this branch took the session
+#     hostage for the third time. The monitor cannot know which case it is in,
+#     so it must assume the quiet one.
+# A HUMAN diagnoses a missing credential by running `agentbus doctor` by hand.
+# The monitor's only permitted moves are: watch, or vanish.
 if [ -z "${AGENTBUS_API_KEY:-}" ]; then
-    echo "AgentBus monitor: no credential for '$agent' ($KEYFILE). Run: agentbus signin <key>"
-    # Exit 0 so the harness treats it as a normal end, not a crash. The diagnostic
-    # above will be delivered as a notification.
-    exit 0
+    exec sleep 2147483647
 fi
 
-command -v agentbus >/dev/null 2>&1 || {
-    echo "AgentBus monitor: the 'agentbus' CLI is not on PATH. Install: curl -fsSL https://agentbus.rodmena.co.uk/install.sh | bash"
-    exit 0
-}
+# CLI missing is the same story: nothing to run, nobody to tell. Park.
+command -v agentbus >/dev/null 2>&1 || exec sleep 2147483647
 
 export AGENTBUS_AGENT="$agent"
 
