@@ -81,10 +81,59 @@ agent="${AGENTBUS_AGENT:-}"
 # this block is that the two components resolve identically (#90).
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-if [ -z "$agent" ]; then
-    if [ -r "$root/.agentbus/agent" ]; then
-        agent=$(tr -d ' \t\r\n' < "$root/.agentbus/agent" 2>/dev/null | head -1)
+# READ A CHECKOUT'S DECLARED AGENT — `.agentbus/agent` first, settings second.
+_declared_agent() {
+    _d=""
+    if [ -r "$1/.agentbus/agent" ]; then
+        _d=$(tr -d ' \t\r\n' < "$1/.agentbus/agent" 2>/dev/null | head -1)
     fi
+    if [ -z "$_d" ] && [ -r "$1/.claude/settings.local.json" ]; then
+        _d=$(sed -n 's/.*"AGENTBUS_AGENT"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+             "$1/.claude/settings.local.json" 2>/dev/null | head -1)
+    fi
+    printf '%s' "$_d"
+}
+
+# LINKED WORKTREE HANDED THE MAIN WORKTREE'S IDENTITY (#129). Claude Code injects
+# the env block from the MAIN worktree's settings.local.json into a session opened
+# in a linked worktree. Because the environment outranks the files (#90), the
+# worktree's own declaration never gets a chance and the session acts as another
+# LIVE agent — on this machine one such session read a message from its parent's
+# inbox and marked it seen, which is loss with no error anywhere.
+#
+# MIRRORED FROM claude_code.py::_worktree_identity_bleed DELIBERATELY. #90 was
+# precisely these two resolvers disagreeing, so a correction in one that is not in
+# the other recreates that bug rather than fixing this one.
+#
+# Narrow on purpose: only when this is a linked worktree, it declares its own
+# agent, that differs from the environment, AND the environment equals the MAIN
+# worktree's declared agent — i.e. the value provably came from the main
+# worktree's file and not from a person. A deliberate operator export is not the
+# main worktree's value, so it still wins.
+if [ -n "$agent" ]; then
+    _common=$(git -C "$root" rev-parse --git-common-dir 2>/dev/null || true)
+    if [ -n "$_common" ]; then
+        case "$_common" in
+            /*) : ;;
+            *) _common="$root/$_common" ;;
+        esac
+        _common=$(cd "$_common" 2>/dev/null && pwd -P || printf '%s' "$_common")
+        _ourgit=$(cd "$root/.git" 2>/dev/null && pwd -P || printf '%s' "$root/.git")
+        if [ "$_common" != "$_ourgit" ]; then
+            _own=$(_declared_agent "$root")
+            _main=$(_declared_agent "$(dirname "$_common")")
+            if [ -n "$_own" ] && [ "$_own" != "$agent" ] && [ "$_main" = "$agent" ]; then
+                echo "AgentBus monitor: \$AGENTBUS_AGENT is '$agent', the MAIN worktree's"
+                echo "  identity, injected by the harness into this LINKED worktree. Using"
+                echo "  this checkout's own declared identity '$_own' instead (#129)."
+                agent="$_own"
+            fi
+        fi
+    fi
+fi
+
+if [ -z "$agent" ]; then
+    agent=$(_declared_agent "$root")
 fi
 
 # LEGACY, and only for Claude Code: projects wired before .agentbus/agent
