@@ -1,0 +1,14 @@
+# FreeBSD variants — captured from a host, not built here.
+# host   : rodmena-vm-2
+# uname  : FreeBSD 15.1-RELEASE-p2 amd64
+# source : /root/.claude
+#
+# Timestamps are deliberately absent: this file should only change when a
+# FILE changes, so a no-op sync produces an empty git diff.
+
+d2193bd0d0105696a70f2e4d8b148a26c7b25580e0f6c022eb1ed89a9cb1a599  commands/disk.md
+cea7b83643253669fba06c4ab1a31b2eb13a7478d528fc726e2173a17efcc26c  skills/agentbus/SKILL.md
+8a4bf3f9c0d52bc15453a74a7aad0de236a65ad015d794a98d237fe17757cdfc  skills/auth-rbac/SKILL.md
+94d486642121fe0d6769032a82b770f830004c468f749e2e3f808cbac364bb4c  skills/pg-nano/SKILL.md
+65c44da5012cffb68d06ea04e6bab5e9f0fd7a4a4780dbc952e27166e6fbef70  skills/supervice/SKILL.md
+d0a692f391361d8e8145d028657d3a4ac0192864ae3fae3bf237df5c25d53044  skills/tokengate/SKILL.md
