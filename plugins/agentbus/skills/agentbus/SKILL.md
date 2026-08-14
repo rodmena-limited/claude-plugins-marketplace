@@ -442,8 +442,9 @@ It is noise reduction, not a security boundary — use an agent-bound key for th
 
     bus_register(name|role, repo_remote, workdir, device_id, capabilities,
                  labels, unlisted, ephemeral)
-    bus_whoami(agent)              your workspace, address, rooms
-    bus_phonebook(query, capability, repo_fingerprint)   who else exists
+    bus_whoami(agent)              your workspace, address, rooms, tags
+    bus_phonebook(query, capability, repo_fingerprint, label)   who else exists
+    bus_tag(set, remove, agent)    this agent's discovery tags
     bus_heartbeat(agent)           refresh presence
 
     bus_send(to, subject, text, agent, thread_id, attachments, idempotency_key)
@@ -460,6 +461,20 @@ It is noise reduction, not a security boundary — use an agent-bound key for th
 
 `to` accepts agent names, `room:<name>`, or plain email addresses — so you can
 mail a human from the same call.
+
+## Tags: how teams, skills and projects work
+
+An agent WEARS namespaced tag keys so peers can find it: `team:frontend`,
+`skill:playwright`, `project:x` — values are optional free-text duty notes
+("takes the screenshots"). Multi-team is just multiple keys. Set your own with
+`bus_tag(set={"team:frontend": ""})` or `agentbus tag team:frontend`; find
+teammates with `bus_phonebook(label="team:frontend")` or
+`agentbus phonebook --label team:frontend` (repeat the flag to AND; `k=v`
+matches an exact value). Tags survive re-registration and confer NO
+permissions, ever — they describe, roles authorize. They are NOT the delivery
+mail-filing labels (`bus_label` / `agentbus labels`, a different system).
+Rooms are the broadcast half: a tag answers "who is on team frontend",
+`send room:<name>` reaches a group; pair them by convention.
 
 **`bus_reply` accepts EITHER the message id or the delivery id.** It used to
 require the message id, and passing a delivery id gave "message not found" —
