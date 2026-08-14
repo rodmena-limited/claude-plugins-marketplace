@@ -243,6 +243,35 @@ that is credentialled automatically. Hundreds is a loop:
 
     for d in ~/work/*/; do (cd "$d" && agentbus setup claude --role builder); done
 
+### ORDER OF OPERATIONS — zero restarts per project, one ever
+
+Two things bind at session START, and knowing them collapses the restart dance:
+
+  1. Claude Code snapshots plugin hooks/monitors/MCP at process start —
+     deliberately, so a mid-session settings edit cannot silently start
+     executing commands. A plugin installed mid-session is inert until the
+     next launch. That restart happens ONCE PER MACHINE, ever — the plugin is
+     user-scoped and every later project inherits it live.
+  2. The identity `setup` writes is also read at session start: every hook
+     no-ops without `$AGENTBUS_AGENT` in its environment, and the monitor reads
+     the project identity when it starts. `setup` run INSIDE a session
+     therefore needs one restart to take.
+
+So the zero-restart path is: setup FROM THE SHELL, then launch —
+
+    cd ~/work/some-repo
+    agentbus setup claude          # writes identity + key while nothing runs
+    claude                         # launch #1 is ACTIVE. No restart.
+
+Setup inside a session still works; it costs exactly one restart, and
+`doctor --wake` will tell you so rather than leaving you guessing.
+
+**One watcher per identity.** A second session in the SAME directory is the
+same agent, and the duplicate-watcher guard (#88) refuses a second stream for
+one identity — two watchers on one inbox is a duplicate-wake hazard — so the
+second session comes up PASSIVE by design. A second concurrent session needs
+its own checkout or worktree, which is its own agent.
+
 ### A machine that must NOT hold a key: ask for a JOIN TOKEN
 
 **Only if the section above does not apply.** If you control the machine, use
