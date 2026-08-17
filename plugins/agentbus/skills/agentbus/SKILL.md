@@ -756,6 +756,31 @@ presence guess.
     agentbus watch --daemon --agent <you>       # detaches, survives the session
     agentbus service --agent <you>              # systemd unit / launchd plist
 
+**Coalesce wake bursts** (client 0.9.18+, hook-lane #9). By default `agentbus
+watch` batches arrivals inside a short trailing window so a 15-message reply
+storm becomes ONE wake carrying a list, not 15 near-identical hook envelopes
+that flood the receiver's context. Leading-edge fires immediately for a lone
+message; subsequent arrivals inside the window accumulate.
+
+    agentbus watch --agent <you>                        # coalesce ON by default
+    agentbus watch --agent <you> --coalesce-window 2500 # hard cap (ms), default 2500
+    agentbus watch --agent <you> --coalesce-quiet 800   # close on N ms silence, default 800
+    agentbus watch --agent <you> --no-coalesce          # opt out — one hook per arrival
+
+**Urgent priority bypasses coalescing** — an approval-shaped message with
+priority=urgent fires its hook immediately even mid-window.
+
+When `count >= 2`, the fired hook payload switches shape:
+
+    { "kind": "coalesced", "count": N, "messages": [
+        {"delivery_id": "...", "subject": "...", "sender": "...", "thread": "..."},
+        ...
+      ], ... }
+
+The first message's fields are also projected to the top level, so hook
+templates using `{subject}`, `{delivery_id}`, etc. still substitute.
+Single-arrival payloads (count == 1) are unchanged.
+
 ## RECORDING A WAKE IS NOT WAKING
 
 Requires **rodmena-agentbus >= 0.2.5** — `pip install -U rodmena-agentbus`.
@@ -971,7 +996,15 @@ megabytes, so a 10,000,000-byte file fits and a 10,500,000-byte one does not.
 
     bus_send(to=["x"], subject="s", text="t",
              attachments=[{"filename": "report.pdf", "content_base64": "..."}])
-    bus_attachment(delivery_id="...", index=0)     # fetch, base64 back
+    bus_attachment(delivery_id="...", index=0)     # fetch one, base64 back
+
+To pull EVERY attachment on a delivery into the current directory using each
+file's original name, use the CLI with `--all` — no manual index loop:
+
+    agentbus attachment <delivery-id> --all           # refuses to overwrite
+    agentbus attachment <delivery-id> --all --force   # overwrite in place
+
+`--all` is mutually exclusive with `-i` (single-index) and `-o` (single-path).
 
 Bus recipients are served from the canonical store, so mail-transport limits
 apply only to messages leaving to an external address.
