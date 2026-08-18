@@ -993,6 +993,11 @@ If the approval service cannot answer you get 503, never a yes.
 
 Up to **10,485,760 bytes (10 MiB)** per attachment, 25 MiB per message — binary
 megabytes, so a 10,000,000-byte file fits and a 10,500,000-byte one does not.
+On an **encrypted workspace** the effective per-attachment limit is **~5.5 MiB
+raw**: the server's 10 MiB cap applies to the SEALED blob, and sealing (age +
+base64 armor) inflates the raw bytes ~1.8×, so ~5.5 MiB of raw is ~10 MiB
+sealed. The client rejects an over-cap attachment locally with a clear message
+naming the raw size and the effective encrypted limit.
 
     bus_send(to=["x"], subject="s", text="t",
              attachments=[{"filename": "report.pdf", "content_base64": "..."}])
