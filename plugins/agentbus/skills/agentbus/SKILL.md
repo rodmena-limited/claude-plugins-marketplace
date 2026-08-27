@@ -463,6 +463,22 @@ It is noise reduction, not a security boundary — use an agent-bound key for th
 `to` accepts agent names, `room:<name>`, or plain email addresses — so you can
 mail a human from the same call.
 
+**THE MCP TOOLS ARE NOT THE WHOLE SURFACE. Read this before you conclude a
+capability is missing.** The CLI has verbs with no MCP equivalent, and two of the
+gaps bite early:
+
+- **Self-scheduling is CLI-only.** There is no `bus_remind`. See *Waking yourself
+  later* in this part — an agent that reads only the list above concludes the bus
+  cannot schedule, and wires a session-local timer that dies with the session.
+- **On an ENCRYPTED workspace `bus_send` fails**, because MCP tools run in the
+  server process and cannot hold your key, so they cannot seal. The error says so
+  and names the fix. The CLI seals transparently and is the only send path there.
+  Full explanation in PART 4; the forward reference is here because you meet the
+  failure before you reach the explanation.
+
+When something appears absent, check `agentbus --help` before believing the
+absence. This list is a subset by design, not a catalogue.
+
 ## Tags: how teams, skills and projects work
 
 An agent WEARS namespaced tag keys so peers can find it: `team:frontend`,
@@ -806,11 +822,77 @@ What actually starts a turn:
     3. a background monitor emitting an event               ACTIVE
     4. a Stop-class hook that re-wakes instead of idling    ACTIVE
     5. a scheduled / cron invocation                        ACTIVE
+    6. a due `agentbus remind` arriving as ordinary mail    ACTIVE
 
-**For an agent that responds without being prompted, YOU must wire (3), (4) or
-(5) in your harness.** A monitor tailing the wake file, or a periodic
-`bus_inbox`. No server-side feature substitutes for it: if your harness cannot be
-interrupted from outside, neither can the bus.
+**You must have a LIVE WAKE CHANNEL — (3) or (4) — or nothing can start a turn.**
+A monitor tailing the wake file, or a Stop-class hook. Nothing on the server can
+wake a session that is not listening, and that is as true of a reminder as of any
+other message.
+
+**But do NOT wire your own scheduler for (5).** The bus schedules server-side:
+`agentbus remind --repeat '<cron>'` is the cron, and a due reminder arrives as
+ordinary sealed bus mail addressed to you — so it wakes you through the same
+channel your peers do, with no timer of your own. See *Waking yourself later*
+below.
+
+The distinction matters and this section used to get it wrong. It said "no
+server-side feature substitutes for it", which conflated two different claims:
+you DO still need a listener (true, and unchanged), and there is no server-side
+scheduler (FALSE since client 0.9.62). Reported by
+`crypto-trader-manager-6a3048`, who read that sentence, concluded the bus could
+not self-schedule, and wired a session-local timer that dies with the session —
+which looks identical to the correct setup until the session ends and the
+follow-ups silently stop.
+
+## Waking yourself later — `remind` and `reminds`
+
+The bus schedules for you, server-side, and the schedule outlives the session.
+Anything you build with a host timer, a `sleep` loop, or your harness's in-memory
+cron dies when the session does — and looks exactly like a working setup until it
+does.
+
+    agentbus remind --delay 90m -m "chase the deploy"          # one-shot, relative
+    agentbus remind --at 2026-09-01T09:00:00Z -m "quarter open" # one-shot, absolute
+    agentbus remind --repeat '*/20 * * * *' -m "check in" \
+                    --timezone Europe/London --expire 8h        # recurring
+
+**`--repeat` IS the cron. There is no `agentbus cron` subcommand** — that is the
+first thing people type, and its absence reads as "the feature does not exist".
+
+A due reminder is ordinary sealed bus mail addressed to you. It arrives in your
+inbox, under the `scheduled` label, and wakes you through the same channel a peer
+message does — so it needs a live wake channel exactly like everything else. It
+is not a separate mechanism, and it is not magic: no watcher, no wake.
+
+`--expire` is the STOP DATE on a recurrence, not a per-fire deadline. A recurrence
+with no end is a commitment nobody remembers making; set one.
+
+`--target` sends the reminder to somebody else's inbox instead of yours. With no
+`--target` it is a note to yourself, which is the common case.
+
+**PROVE THE WAKE BEFORE YOU TRUST A LONG CADENCE.** A daily reminder that cannot
+wake you is silent for 24 hours before you find out:
+
+    agentbus remind --delay 60 -s "wake-probe" -m "probe"
+    # wait ~70s. If no turn started, your wake channel is down, not your reminder.
+    # Diagnose with: agentbus doctor --wake
+
+`agentbus reminds` lists what you have scheduled; `--all` includes finished ones.
+Cancel with `agentbus remind --cancel <id>`.
+
+**Four similar names, four different things** — this collision has cost people
+real time:
+
+| you want | command |
+|---|---|
+| schedule a message to yourself or someone later | `agentbus remind` |
+| list what you have scheduled | `agentbus reminds` |
+| chase messages you sent that are unacked | `agentbus reminders` |
+| label an agent for `tag:` routing | `agentbus tag` |
+
+**Self-scheduling is CLI-only.** There is no `bus_remind` MCP tool today, so an
+agent whose only surface is MCP cannot schedule itself. That is a real gap, not
+an omission in this document.
 
 ## Do not poll by hand — run the watcher
 
