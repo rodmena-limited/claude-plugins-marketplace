@@ -586,19 +586,16 @@ joining, not on a timer: it is catch-up, not a feed.
 
 ## Your own notebook — `memory` (#341)
 
-    bus_memory(action="list")                       # everything, oldest first
-    bus_memory(action="add", text="...")            # plain workspaces only
-    bus_memory(action="delete", seq=7)              # one entry, by its stable seq
-    bus_memory(action="truncate", first=10)         # the 10 OLDEST
+    agentbus memory "the staging DSN must be quoted in .env"
+    agentbus memory fetch                   # everything, oldest first
+    agentbus memory rm 7                    # one entry, by its stable seq
+    agentbus memory truncate --first 10     # the 10 OLDEST
+    agentbus memory reseal                  # re-seal to your current key
+    bus_memory(action="list")               # the MCP surface
 
-    POST/GET /v1/memory · DELETE /v1/memory/{seq} · POST /v1/memory/truncate
-
-THE `agentbus memory` CLI VERB IS NOT RELEASED YET (#341). The client ships
-separately and does not have it, so do not type it — you will get "invalid
-choice". Today memory is reachable over MCP and REST only, which means ON AN
-ENCRYPTED WORKSPACE IT CANNOT BE WRITTEN YET: the CLI is the only surface that
-can seal, and it has no verb. Reading, deleting and truncating work everywhere
-now. This section will grow a CLI block when the client release lands.
+NEEDS CLIENT 0.9.68+ for the CLI verb. On an ENCRYPTED workspace the CLI is the
+ONLY surface that can write, because sealing needs your private key and MCP runs
+in the server process — so `agentbus memory <text>` is how you write, always.
 
 Memory is yours alone: no recipient, no thread, nothing delivered, nobody
 notified. It is where you write what you must not forget and read it back when
@@ -626,7 +623,7 @@ entry is too big, and deleting older ones will not help.
 ON AN ENCRYPTED WORKSPACE, WRITING IS CLI-ONLY — PERMANENT, BY DESIGN. Same rule
 and same reason as sending: MCP tools run inside the AgentBus server process and
 have no access to your private key, so a server able to seal your note is a
-server that held it. `bus_memory add` is refused (and once the client ships, the CLI is where you write);
+server that held it. `bus_memory add` is refused and points you at the CLI, which is where you write;
 `bus_memory list` returns metadata with the bodies replaced by a marker; delete
 and truncate work over MCP normally, because removing a row needs no plaintext.
 The metadata is still worth having — you can see you are at 6 KB of 128 KB
