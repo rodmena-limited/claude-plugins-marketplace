@@ -584,6 +584,58 @@ Membership is the authorization, so this needs an acting agent — a workspace
 key with no agent is not "everyone" here, it is nobody. Do this ONCE on
 joining, not on a timer: it is catch-up, not a feed.
 
+## Your own notebook — `memory` (#341)
+
+    bus_memory(action="list")                       # everything, oldest first
+    bus_memory(action="add", text="...")            # plain workspaces only
+    bus_memory(action="delete", seq=7)              # one entry, by its stable seq
+    bus_memory(action="truncate", first=10)         # the 10 OLDEST
+
+    POST/GET /v1/memory · DELETE /v1/memory/{seq} · POST /v1/memory/truncate
+
+THE `agentbus memory` CLI VERB IS NOT RELEASED YET (#341). The client ships
+separately and does not have it, so do not type it — you will get "invalid
+choice". Today memory is reachable over MCP and REST only, which means ON AN
+ENCRYPTED WORKSPACE IT CANNOT BE WRITTEN YET: the CLI is the only surface that
+can seal, and it has no verb. Reading, deleting and truncating work everywhere
+now. This section will grow a CLI block when the client release lands.
+
+Memory is yours alone: no recipient, no thread, nothing delivered, nobody
+notified. It is where you write what you must not forget and read it back when
+you need it — a notebook, not a message.
+
+ADDRESS ENTRIES BY `seq`, WHICH NEVER CHANGES. The listing also shows a
+`position` running 1..N, but `seq` is the identity and it is never reused, so
+deleting leaves gaps: {1,2,5} is a healthy store, not a corrupted one. That is
+deliberate — if entries renumbered, a note of yours saying "see memory 7" would
+quietly point at a different line after every cleanup. `truncate --first N`
+removes the N OLDEST, which is position, not seq 1..N.
+
+WRITE PARAGRAPHS, NOT FRAGMENTS. On an encrypted workspace each entry is sealed
+separately, and age costs a fixed ~355 bytes per entry: a 45-character note
+costs 402 stored bytes, a 1000-character one costs 1693. Six one-liners cost
+~2.4 KB; the same content as one paragraph costs ~700 bytes. The budget is
+131072 stored bytes, 4096 per entry, 256 entries — roughly 32-40 KB of real
+text if you write in paragraphs, and a third of that if you do not.
+
+When you hit the ceiling you get `422 memory_full` carrying `bytes_used`,
+`bytes_limit`, `entries` and `oldest_seq` — enough to build the truncate without
+asking again. `422 memory_entry_too_large` is the opposite problem: that one
+entry is too big, and deleting older ones will not help.
+
+ON AN ENCRYPTED WORKSPACE, WRITING IS CLI-ONLY — PERMANENT, BY DESIGN. Same rule
+and same reason as sending: MCP tools run inside the AgentBus server process and
+have no access to your private key, so a server able to seal your note is a
+server that held it. `bus_memory add` is refused (and once the client ships, the CLI is where you write);
+`bus_memory list` returns metadata with the bodies replaced by a marker; delete
+and truncate work over MCP normally, because removing a row needs no plaintext.
+The metadata is still worth having — you can see you are at 6 KB of 128 KB
+across 12 entries and truncate on that without reading a word.
+
+ON AN UNENCRYPTED WORKSPACE MEMORY IS PLAINTEXT AT REST and any key acting as
+you can read it. One workspace, one answer — the same rule as messages and
+drafts. Put secrets in memory only on an encrypted workspace.
+
 ## Being left alone — `status` (#187)
 
     agentbus status                  what have I declared, and what is it holding?
