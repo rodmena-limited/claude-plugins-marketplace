@@ -441,31 +441,28 @@ while [ "$attempt" -lt 5 ]; do
     # loop ever inspects a status. Reaching here at all therefore PROVES the
     # streamer was killed by something that is not this session's teardown.
     if [ "$status" -eq 143 ]; then
-        # NO own_teardown BRANCH HERE, deliberately.
+        # SPECS/0020 (agentbus-client #20): SIGTERM IS RETRYABLE.
         #
-        # There used to be one, exiting 0 in silence on the grounds that a real
-        # reap has nothing to say. It was DEAD CODE — `cleanup` is the only
-        # writer of own_teardown and it prints and exits immediately, so control
-        # never returns here — and david found it by reading rather than running,
-        # which is the only way it could be found.
+        # This USED to exit $EXIT_STREAM_KILLED (6) immediately. A killed
+        # child — a stray pkill, a session restart race, OS memory pressure —
+        # permanently ended the wake path, and the harness reported "Monitor
+        # script failed (exit 6)", waking the session with a false alarm
+        # about something that was, in all observed cases, transient.
         #
-        # Removed rather than left harmlessly unreachable, for two reasons. It
-        # contradicted the design it sat inside: the reap case is handled in
-        # `cleanup`, which SPEAKS. And it would become live the moment anyone
-        # made `cleanup` drain instead of exit — reintroducing, silently, the
-        # exact defect this file has now been patched for four times.
+        # The invariant that led here ("reaching this line PROVES it was not
+        # our session's teardown") is still true: a real teardown fires
+        # `cleanup`, which exits 0. But "not our session" is not the same as
+        # "permanent". A stray signal is transient. Retry it within the
+        # startup budget, reset if the stream had been up > 60s (below), and
+        # only give up after 5 consecutive fast failures — the same logic
+        # every other transient exit code gets.
         #
-        # Reaching this line at all means the streamer took a SIGTERM that this
-        # session did not send.
+        # The diagnostic still goes to STDOUT so Claude sees it and the
+        # operator knows the SIGTERM happened. But the monitor does not exit.
         echo "AgentBus monitor: the wake stream was KILLED (SIGTERM) by something"
-        echo "  outside this session — this session was never signalled, so this is"
-        echo "  NOT a SessionEnd reap. A stray pkill or another session's sweep will"
-        echo "  do it."
-        echo "  THE WAKE PATH IS DOWN, and nothing checked your inbox: this is not a"
-        echo "  report that no mail arrived. Unread mail may be waiting:"
-        echo "    agentbus inbox --unread"
-        echo "  Re-arm with: agentbus watch --agent $agent"
-        exit "$EXIT_STREAM_KILLED"
+        echo "  outside this session. Treating as transient and retrying."
+        echo "  If this persists, something is repeatedly killing the watcher."
+        # Fall through to the duration check + attempt increment below.
     fi
     # A DEAD SESSION SOCKET IS TERMINAL, NOT RETRYABLE (2026-08-11).
     #
@@ -523,7 +520,18 @@ echo "  This is a startup failure, not a reap: a deliberate teardown exits 143 a
 echo "  THE WAKE PATH IS DOWN. This is not evidence of an empty inbox — nothing"
 echo "  was checked. Unread mail may be waiting: agentbus inbox --unread"
 echo "  Check the credential and connectivity: agentbus doctor --wake"
-# NON-ZERO. Printing the failure and then exiting 0 is a false green: it reports
-# the problem on stdout and reports success in the status code, and the status
-# code is what a harness reads.
-exit "$EXIT_STREAM_FAILED"
+# SPECS/0020 (agentbus-client #20): PARK, DO NOT EXIT.
+#
+# This used to `exit $EXIT_STREAM_FAILED` (5). An exiting monitor wakes the
+# session with "Monitor script failed (exit 5)" — a false alarm that triggers
+# unnecessary agent activity (the agent reads "failure", checks an inbox it
+# cannot reach, and tries to fix a credential that may be fine). That is the
+# exact same shape as the silent-inbox failure this file has been patched for
+# five times now, wearing a different sign.
+#
+# A PARKED monitor is SILENT and costs nothing: one sleeping process, reaped
+# by SessionEnd with the rest of the session. The diagnostic above has
+# already been delivered to stdout (Claude sees it). The operator's next
+# session will start a fresh monitor that may succeed — or fail the same way
+# and park again, but never LOOP.
+exec sleep 2147483647
