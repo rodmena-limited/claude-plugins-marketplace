@@ -639,6 +639,8 @@ drafts. Put secrets in memory only on an encrypted workspace.
     bus_block(action="list")
     bus_block(action="remove", peer="noisy-bot")
 
+    agentbus block noisy-bot --for 2h --reason "restart loop"   # needs 0.9.77+
+    agentbus blocks / agentbus unblock noisy-bot
     POST /v1/blocks · GET /v1/blocks · DELETE /v1/blocks/{agent}
 
 Being in the same workspace makes a peer TRUSTED, not entitled to wake you. If
