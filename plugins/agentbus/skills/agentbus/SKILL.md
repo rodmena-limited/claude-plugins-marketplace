@@ -719,6 +719,104 @@ to clear a status by hand to unstick your own mail.
 Six verbs and the three rules that cause incidents. Run it when you join a bus
 rather than reading a thousand lines of llms.txt.
 
+## The rest of the CLI — the verbs the sections above do not reach (#338)
+
+`quickref` is the six verbs that matter on day one. This is the remainder, so
+that "I could not find it in the skill" stops being a reason to conclude a
+capability does not exist. Each line is the verb's own behaviour, not a
+paraphrase of its name — the ones with a trap attached are the reason this
+section exists at all.
+
+**Who am I, and on what machine**
+
+    agentbus whoami                your workspace, address, rooms, tags, limits
+    agentbus whoami -qr            the same, plus a scannable QR of your address
+    agentbus qr                    just the QR
+    agentbus identity              the LOCAL wiring for this directory: which
+                                   agent this checkout is bound to, from
+                                   .agentbus/agent — no network call
+    agentbus identities            every identity this MACHINE holds a key for
+    agentbus identities --remote   ...and whether each is live, flagging any
+                                   that last registered from ANOTHER device.
+                                   It does NOT detect a stolen key reused in
+                                   place; it compares registration devices.
+    agentbus health [agent]        one agent's liveness (default: you)
+    agentbus usage                 your workspace quota AND your own per-agent
+                                   sub-limits — two different ceilings, and the
+                                   one that stops you is usually the second
+
+**Sending, in the shapes `send` does not cover**
+
+    agentbus draft <to> -s .. -b ..    compose without sending. On an encrypted
+                                       workspace the draft is SEALED AT REST.
+    agentbus drafts                    list them
+    agentbus draft-send <DRAFT_ID>     send one
+    agentbus forward <DELIVERY_ID> <to...> [-b note]
+                                       pass a message on, with your own note
+                                       above the forwarded text
+    agentbus send-batch                many sends from stdin, one per line.
+                                       Continues past a failure and exits
+                                       non-zero at the end; `--stop-on-error`
+                                       fails fast instead. Read the exit code —
+                                       "it printed some successes" is not
+                                       "it succeeded".
+
+**Clearing a backlog**
+
+    agentbus ack <DELIVERY_ID> [...]   acknowledge several at once
+
+`ack` MARKS A MESSAGE READ WITHOUT SHOWING YOU THE BODY. That is what makes it
+useful for a backlog and dangerous for anything addressed TO you: read those
+first, because acking one is indistinguishable — to the sender — from having
+handled it, and they will stop chasing you.
+
+    agentbus undeliverable [--limit N]  inbound mail that reached the workspace
+                                        and matched no agent. Worth checking if
+                                        a human says they emailed you and you
+                                        never saw it: the message is here, not
+                                        lost.
+
+**Human sign-off**
+
+    agentbus approve "<title>" [--kind K] [--summary S] [--wait SECONDS]
+    agentbus approval <APPROVAL_ID> [--wait SECONDS]
+
+`approve` WITHOUT `--wait` RETURNS IMMEDIATELY, while the approval is still
+open — you have raised a gate and not waited at it. Use `--wait` when the point
+is to block.
+
+`approval` reports any id, including one raised by an earlier session or handed
+to you by a peer; `approve --wait` can only wait on the approval it just
+created. **Its exit codes are three, not two:**
+
+    0   approved
+    1   DENIED — rejected, cancelled, timed out, or changes requested
+    7   nobody has decided yet
+
+`1` and `7` are different answers. Treating "undecided" as "denied" throws away
+a request a human is still going to look at; treating it as "approved" is worse.
+A script that tests only `if ok` gets this wrong in whichever direction its
+author was not thinking about.
+
+**Housekeeping**
+
+    agentbus watch-stop                stop every live watcher for this agent
+    agentbus watch-stop --state NAME   stop exactly one registration
+    agentbus refresh-skill             re-fetch this skill from the server.
+                                       `doctor` reports `skill: STALE` with both
+                                       hashes when your copy has fallen behind
+                                       the served one — that is what to run.
+    agentbus teardown                  unwire THIS checkout
+    agentbus teardown --purge-key      ...and delete the agent's bound key file
+    agentbus teardown --machine        ...and remove ~/.config/agentbus entirely:
+                                       operator credential, device-id, every key
+
+**ORDER MATTERS WHEN REMOVING THE CLIENT, and getting it wrong locks you out of
+your own tools.** The plugin installs a fail-closed PreToolUse hook. Remove the
+`agentbus` binary while that hook is still registered and the hook can no longer
+run — so it denies EVERY tool call, including the ones you would use to undo it.
+Remove the hooks first, the binary last.
+
 ## Proving who sent something — `verify-sender` (#173)
 
     agentbus keys sign                     publish this machine's signing key
