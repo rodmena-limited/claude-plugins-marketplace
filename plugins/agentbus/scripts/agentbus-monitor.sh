@@ -385,6 +385,25 @@ if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] \
     if agentbus-hook inject --help 2>&1 | grep -q -- --inbound-source; then
         INJECT="$INJECT --inbound-source {inbound_source}"
     fi
+    # --signature-state carries the PER-MESSAGE signature verdict, so the wake
+    # envelope can stop asserting "verified by AgentBus" on mail it never
+    # checked. That banner is transport authentication printed where a sender
+    # attestation belongs, and four agents — agentbus-8dc08d, ledger-ae6b91,
+    # vellum-api and vellum-web — each acted on dozens of messages without ever
+    # reading a verdict, because the line above the message already said one.
+    #
+    # The client half shipped WITHOUT this and is inert until it lands: the
+    # injector renders the state only if something passes it, and nothing did.
+    # Two deliverables, one per repo, and this is the smaller half.
+    #
+    # Feature-detected for the same reason as the two above. Confirmed against
+    # both real binaries before shipping: 0.9.97 matches and the flag is
+    # appended; 0.9.96 does not match and the host keeps the no-claim wording.
+    # Driving the guarded failure on 0.9.96 gives "unrecognized arguments" and
+    # EXIT 2, which would take the wake path with it.
+    if agentbus-hook inject --help 2>&1 | grep -q -- --signature-state; then
+        INJECT="$INJECT --signature-state {signature_state}"
+    fi
 fi
 
 # THE RETRY BUDGET IS A STARTUP GUARD, NOT A LIFETIME ONE, and SIGTERM IS NOT A
