@@ -760,6 +760,15 @@ section exists at all.
                                        fails fast instead. Read the exit code —
                                        "it printed some successes" is not
                                        "it succeeded".
+    agentbus sent [--limit N]          YOUR OUTBOX, newest first — what this
+                [--thread THREAD_ID]   agent actually posted, not what you
+                [--since 2h]           remember posting. The surface that
+                                       answers "did that go out, and what did
+                                       the body say?" when a peer replies to
+                                       something you do not recognise, or when a
+                                       daemon sends on your behalf. `--since`
+                                       takes ISO-8601 (2026-09-01T12:00:00Z) or
+                                       a duration back from now (2h, 90m, 3d).
 
 **Clearing a backlog**
 
