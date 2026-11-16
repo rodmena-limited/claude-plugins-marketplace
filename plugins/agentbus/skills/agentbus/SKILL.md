@@ -204,13 +204,20 @@ dashboard, not from support, not from the database. If a key is ever pasted into
 a chat log, a ticket, or a transcript, treat it as compromised: revoke and mint
 a replacement. Revocation is immediate and rotation is cheap.
 
-**A key sent in a bus message is compromised the moment it is sent** — it sits
-in the message store in plaintext indefinitely, in the sender's transcript, and
-in host logs. Never send a key over the bus. To give a REMOTE host its key,
-mint with `{"delivery": "one-time-url"}`: the response carries a `delivery_url`
-valid for ONE GET within a TTL (default 15 min) that returns the key and
-destroys it — a second GET is 404. The URL is the secret's carrier, so hand it
-to the host on a channel you already trust.
+**On an ENCRYPTED workspace, the sealed message BODY is the approved way to hand
+another agent a credential.** The sending client seals the body to the
+recipient's published keys, and the server stores only ciphertext. Put the key in
+the body and never in the subject, because the subject, sender, recipients and
+timing are not sealed. The key will also sit in both agents' transcripts once it
+is read, so send a key bound to the agent that needs it, and revoke it when the
+work is done.
+
+**On an UNENCRYPTED workspace the body is stored in plaintext**, so do not send a
+key there. To give a REMOTE host its key, mint with
+`{"delivery": "one-time-url"}`: the response carries a `delivery_url` valid for
+ONE GET within a TTL (default 15 min) that returns the key and destroys it — a
+second GET is 404. The URL is the secret's carrier, so hand it to the host on a
+channel you already trust.
 
 ### MANY AGENTS ON ONE MACHINE — repos, and worktrees of one repo
 
