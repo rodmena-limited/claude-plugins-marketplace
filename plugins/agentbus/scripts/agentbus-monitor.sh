@@ -1,87 +1,25 @@
 #!/bin/sh
-# AgentBus inbox monitor — the ACTIVE wake path, as a Claude Code plugin monitor.
+# AgentBus inbox monitor: the ACTIVE wake path, run by Claude Code as a plugin
+# monitor for the lifetime of the session. Every stdout line reaches Claude as a
+# notification; stderr is discarded, so every diagnostic here goes to STDOUT.
 #
-# Claude Code starts this automatically when the plugin is active, runs it for
-# the LIFETIME of the session, and delivers every line we print to Claude as a
-# notification. That is why this is a plugin monitor and no longer a Stop hook:
-#
-#   * no timeout        — a hook is capped at Claude Code's documented 600s;
-#                         a monitor runs as long as the session does
-#   * no window to size — nothing to keep below a ceiling, so the
-#                         timeout-must-exceed-window invariant simply vanishes
-#   * no accumulation   — the monitor's unique `name` prevents duplicate
-#                         processes, which is what made two Stop-hook monitors
-#                         race and both wake for one message
-#   * no polling        — `agentbus watch` holds an SSE stream, so arrivals are
-#                         PUSHED. Nothing is spent while the inbox is quiet.
-#
-# Resolution rules, each of which was a real failure first:
-#   * the acting agent comes from THIS project (a monitor runs in the session
-#     working directory), never from a guess. No agent -> stay silent and idle:
-#     a monitor that invents an identity watches an inbox nobody owns, and a
-#     monitor that explains itself in unrelated repos gets uninstalled.
-#   * the credential is read from the per-agent key file. It CANNOT come from
-#     plugin user config: monitor commands receive no ${user_config.*}
-#     substitution and no CLAUDE_PLUGIN_OPTION_* environment, by design, since
-#     this command reaches a shell.
-#   * `set -a` around the sourcing is load-bearing. Without it the key lands in
-#     an unexported shell variable, the child never sees it, and the failure is
-#     silent — a wired-looking monitor that watches nothing.
-# DIAGNOSTICS GO TO STDOUT, NEVER STDERR. Claude Code "delivers every stdout
-# line to Claude as a notification" — stderr is DISCARDED. So every warning
-# below was previously written to a stream nobody reads, and the operator saw
-# only Claude Code's own summary:
-#
-#     Monitor "AgentBus inbox" ended without producing output (exit 0)
-#
-# which is the exact message these warnings exist to replace. The 0.1.4 fix for
-# silence was itself silent. Reported by the operator opening a session in
-# another repo and seeing the unchanged line.
+# Rules this file keeps, each from a real incident (history: git log, SPECS/0020):
+#   * identity comes only from $AGENTBUS_AGENT or the checkout's .agentbus/agent
+#     (#90, #129). No identity, no key or no CLI means PARK SILENTLY (#108, #118).
+#   * never exit 0 having said nothing: the harness reads that as "no mail".
+#   * one live watcher per identity: a second one duplicates every wake.
+#   * the key is sourced under `set -a`, or the child never sees it.
 set -u
 
 CONFIG_DIR="${AGENTBUS_CONFIG_DIR:-$HOME/.config/agentbus}"
 
-# --- who is this project's agent? -------------------------------------------
-#
-# AGENTBUS_AGENT IS THE KILL SWITCH. No identity, no AgentBus — no watcher, no
-# network call, no output, nothing. Operator directive, 2026-08-13, after this
-# monitor announced itself in a session that had deliberately not opted in and
-# talked the assistant into wiring the project mid-task.
-#
-# Identity comes from exactly TWO places, both of which somebody chose on
-# purpose, and they are tried in this order:
-#
-#   1. $AGENTBUS_AGENT              — the operator's word for this session
-#   2. .agentbus/agent in the repo  — the worktree's own declaration
-#
-# and from NOWHERE ELSE. What is deliberately gone:
-#
-#   * the machine-global signin default_agent. It attached UNWIRED directories
-#     to whoever this machine last signed in as — bob reproduced a scratch
-#     directory streaming david's inbox to cursor 474, and the "it announces
-#     itself" mitigation only made a cross-agent mail leak legible, not correct.
-#     The in-repo file below is what david needed all along: an explicit
-#     identity that survives a reopened session without guessing.
-#
-#   * the setup nag. A monitor that tells an unwired project how to wire itself
-#     is not a diagnostic, it is a prompt — and an agent reading its own
-#     notifications treats it as an instruction. Silence is the correct output
-#     for "this project did not ask for a bus".
-#
-# The precedence matches sdk/agentbus_client/hooks/claude_code.py exactly. It
-# has to: #90 was the hooks following one source and the monitor another, after
-# which the session held two identities at once and each half looked fine.
+# --- who is this project's agent? (precedence matches hooks/claude_code.py, #90)
 agent="${AGENTBUS_AGENT:-}"
 
-# ONE ROOT FOR BOTH FILE LOOKUPS. `.agentbus/agent` was resolved from the git
-# toplevel while `.claude/settings.local.json` was read as a BARE RELATIVE PATH,
-# so in any subdirectory of a checkout the second lookup silently found nothing
-# and the monitor exited 0 as if the project had never opted in. Same split
-# existed in claude_code.py; both are fixed together, because the whole point of
-# this block is that the two components resolve identically (#90).
+# One root for both file lookups, so a subdirectory of a checkout resolves the
+# same identity as its top level.
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-# READ A CHECKOUT'S DECLARED AGENT — `.agentbus/agent` first, settings second.
 _declared_agent() {
     _d=""
     if [ -r "$1/.agentbus/agent" ]; then
@@ -94,22 +32,10 @@ _declared_agent() {
     printf '%s' "$_d"
 }
 
-# LINKED WORKTREE HANDED THE MAIN WORKTREE'S IDENTITY (#129). Claude Code injects
-# the env block from the MAIN worktree's settings.local.json into a session opened
-# in a linked worktree. Because the environment outranks the files (#90), the
-# worktree's own declaration never gets a chance and the session acts as another
-# LIVE agent — on this machine one such session read a message from its parent's
-# inbox and marked it seen, which is loss with no error anywhere.
-#
-# MIRRORED FROM claude_code.py::_worktree_identity_bleed DELIBERATELY. #90 was
-# precisely these two resolvers disagreeing, so a correction in one that is not in
-# the other recreates that bug rather than fixing this one.
-#
-# Narrow on purpose: only when this is a linked worktree, it declares its own
-# agent, that differs from the environment, AND the environment equals the MAIN
-# worktree's declared agent — i.e. the value provably came from the main
-# worktree's file and not from a person. A deliberate operator export is not the
-# main worktree's value, so it still wins.
+# #129: the harness injects the MAIN worktree's AGENTBUS_AGENT into a session
+# opened in a LINKED worktree. Mirrored from claude_code.py::_worktree_identity_bleed.
+# Only overridden when the environment provably came from the main worktree's
+# file; a deliberate operator export still wins.
 if [ -n "$agent" ]; then
     _common=$(git -C "$root" rev-parse --git-common-dir 2>/dev/null || true)
     if [ -n "$_common" ]; then
@@ -136,45 +62,20 @@ if [ -z "$agent" ]; then
     agent=$(_declared_agent "$root")
 fi
 
-# LEGACY, and only for Claude Code: projects wired before .agentbus/agent
-# existed declared themselves here. Still honoured so an upgrade does not
-# silently deafen a working session; `agentbus setup` now writes both.
+# Legacy Claude Code declaration, kept so an upgrade does not deafen a session.
 if [ -z "$agent" ] && [ -r "$root/.claude/settings.local.json" ]; then
     agent=$(sed -n 's/.*"AGENTBUS_AGENT"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
             "$root/.claude/settings.local.json" 2>/dev/null | head -1)
 fi
 
-# NO IDENTITY -> THE BUS IS OFF HERE, AND OFF MEANS *SILENT*, NOT "ENDED".
-#
-# This used to `exit 0`, and exit 0 is not silence: the harness reports every
-# monitor that ends — "Monitor ended without producing output (exit 0)" — as a
-# task notification INTO THE SESSION. That notification wakes Claude with no
-# user interaction, and a woken Claude reads "AgentBus inbox monitor ended",
-# helpfully checks an inbox that does not exist, and then tries to REGISTER an
-# agent in a project the operator deliberately left unwired (observed in
-# container-registry, 2026-08-13). The kill switch was working and still
-# generating bus activity in an opted-out project — the exact thing it exists
-# to prevent (#108).
-#
-# A monitor that has nothing to watch must therefore NEVER END while the
-# session lives. Park forever: no output, no exit, no notification, no woken
-# Claude. One sleeping process costs nothing. SessionEnd's reap kills it with
-# the session, when there is nobody left to notify. Wiring a project mid-
-# session already requires a restart (the monitor reads identity at start), so
-# parking loses nothing.
-#
-# `exec sleep`, NOT a sleep loop. A `while :; do sleep 3600; done` shell that
-# takes the reap's TERM dies — but its CURRENT sleep child is orphaned still
-# holding the stdout pipe, so anything waiting on that pipe (the harness, the
-# test that caught this) hangs until the sleep expires. exec replaces the
-# shell with a single sleep process: TERM kills it directly, nothing survives,
-# no pipe is left held. ~68 years is forever for a session, and portable where
-# `sleep infinity` (GNU-only) is not.
+# PARK = `exec sleep`, never exit and never a sleep loop. An ended monitor is
+# reported into the session and wakes it (#108); a sleep loop orphans its child
+# holding the stdout pipe on TERM. exec leaves one process that TERM kills.
 if [ -z "$agent" ]; then
     exec sleep 2147483647
 fi
 
-# --- credential --------------------------------------------------------------
+# --- credential ---------------------------------------------------------------
 KEYFILE="$CONFIG_DIR/keys/${agent}.env"
 if [ -r "$KEYFILE" ]; then
     set -a
@@ -183,51 +84,20 @@ if [ -r "$KEYFILE" ]; then
     set +a
 fi
 
-# No key anywhere: PARK, SILENTLY — the same treatment as no identity (#118).
-#
-# This branch used to print "Run: agentbus signin <key>" and exit. Every word
-# of that was a mistake, learned three times over one day:
-#   * the reader of monitor stdout is a WOKEN CLAUDE, which relays instructions
-#     to the operator as action requests — the ransom shape (#107/#108);
-#   * exit 0 is not silence: the harness reports every ended monitor INTO the
-#     session and wakes it (#108);
-#   * a declared identity with a missing key file is indistinguishable, from
-#     out here, from an operator MID-OPT-OUT deleting AgentBus piece by piece —
-#     which is exactly what was happening when this branch took the session
-#     hostage for the third time. The monitor cannot know which case it is in,
-#     so it must assume the quiet one.
-# A HUMAN diagnoses a missing credential by running `agentbus doctor` by hand.
-# The monitor's only permitted moves are: watch, or vanish.
+# No key: park silently (#118). A missing key looks the same as an operator
+# mid-opt-out, and the reader of this stdout is a woken Claude, not a person.
 if [ -z "${AGENTBUS_API_KEY:-}" ]; then
     exec sleep 2147483647
 fi
 
-# CLI missing is the same story: nothing to run, nobody to tell. Park.
 command -v agentbus >/dev/null 2>&1 || exec sleep 2147483647
 
 export AGENTBUS_AGENT="$agent"
 
-# --- stream ------------------------------------------------------------------
-# `agentbus watch` holds an SSE connection, drains from its committed cursor at
-# startup and after every wake, checkpoints so a restart neither replays nor
-# skips, and reconnects with backoff on transport failure. It returns only when
-# something terminal happens (a revoked key), so a bounded restart loop guards
-# against an unexpected crash without spinning forever on a credential that will
-# never work again.
-# Its OWN cursor file. Sharing one with a `watch` daemon would be the
-# "two processes under one name share an inbox and compete for deliveries"
-# problem in cursor form: whichever advanced it first would hide messages from
-# the other.
-# PER SESSION, not per agent. Identity is derived from device+repo+path, so
-# every session on one checkout is the SAME agent and would share one state
-# file name. SessionEnd then reaps across sessions — and asymmetrically, because
-# a headless `claude -p` spawns no monitor (they are interactive-only) yet its
-# SessionEnd still reaped whichever monitor it found. A cron job, CI step or git
-# hook running `claude -p` on a repo someone has open would silently kill the
-# interactive session's only active wake path, while the server still reported
-# wake_channel true because a supervised watcher kept answering. Reported by
-# david with a twice-run reproduction; 0.2.0 moved that lie rather than closing
-# it, since before the reap existed there was no way to lose a monitor this way.
+# --- stream -------------------------------------------------------------------
+# The cursor file is PER SESSION: every session on one checkout is the same
+# agent, and a shared state file let a headless `claude -p` reap the interactive
+# session's monitor.
 sid="${CLAUDE_CODE_SESSION_ID:-}"
 if [ -n "$sid" ]; then
     STATE="$CONFIG_DIR/monitor-${agent}-${sid}.json"
@@ -236,85 +106,76 @@ else
 fi
 
 # REFUSE A SECOND LIVE WATCHER FOR THE SAME AGENT (container-registry incident,
-# 2026-08-11). Two monitors on one identity each hold their own cursor and both
-# receive every SSE event, so one arrival fires --exec/inject TWICE (duplicate
-# wakes), and whichever session reads first hides the message from the other's
-# unread view — a swallowed message that looks exactly like an empty inbox.
+# 2026-08-11): two watchers each fire every wake and hide mail from each other.
 #
-# The check: is there a live watcher for this agent whose SESSION is not ours?
-# A handover is fine (the old session's watcher is gone, so the state file is
-# stale and unlinked by watch-status); a genuine second session is not. We
-# compare against the session id embedded in the state file, never against a
-# bare "any watcher" — otherwise the guard would fight the monitor's own
-# bounded restart loop.
-# DIAGNOSTIC TO STDOUT: Claude Code delivers monitor stdout to the session.
-if [ -n "$sid" ]; then
+# Held means another SESSION's monitor (a state file carrying a session uuid
+# that is not ours) or an omo session holding the agent's lock. A daemon or a
+# foreground `agentbus watch` does not count: it wakes no session, and parking
+# beside it would leave this session deaf.
+#
+# `agentbus watch-check` (client 0.9.108+, #100) reports both kinds. It is
+# feature-detected; an older client falls back to the watch-status scan, which
+# cannot see an omo lock.
+SESSION_LABEL='-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json\.pid'
+held_by=""
+if agentbus watch-check --help >/dev/null 2>&1; then
+    if [ -n "$sid" ]; then
+        check_out=$(agentbus watch-check --agent "$agent" --session "$sid" 2>/dev/null)
+    else
+        check_out=$(agentbus watch-check --agent "$agent" 2>/dev/null)
+    fi
+    check_status=$?
+    if [ "$check_status" -eq 4 ]; then
+        if printf '%s\n' "$check_out" | grep -q '^  omo session'; then
+            held_by="omo"
+        elif [ -n "$sid" ] && printf '%s\n' "$check_out" | grep -qE -- "$SESSION_LABEL"; then
+            held_by="session"
+        fi
+    fi
+elif [ -n "$sid" ]; then
     other_status=$(agentbus watch-status --agent "$agent" 2>/dev/null || true)
-    # watch-status lists EVERY live watcher with its state-keyed pid file name,
-    # e.g. "...container-registry-audit-e8826b-90f9ad69-b60c-...json.pid". If one
-    # names a session other than ours, another session is actively watching.
-    if printf '%s' "$other_status" | grep -qE -- "-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json\.pid" \
+    if printf '%s' "$other_status" | grep -qE -- "$SESSION_LABEL" \
         && ! printf '%s' "$other_status" | grep -q -- "-${sid}\.json\.pid"; then
-        echo "AgentBus monitor: another session is ALREADY watching agent '$agent'."
-        echo "  Two live watchers on one identity duplicate every wake and share"
-        echo "  read/ack state, so this monitor will NOT start a second one."
-        echo "  If the other session has ended, its watcher will be reaped and"
-        echo "  this monitor resumes on its next restart."
-        echo "  Nothing here checked your mail: agentbus inbox --unread"
-        exit 0
+        held_by="session"
     fi
 fi
 
-# Seed the cursor to the CURRENT END of the inbox before streaming. Without
-# this the watcher drains from a stale checkpoint and every backlogged message
-# is delivered to Claude as a notification — 34 of them on the first real test,
-# which is a flood, not a wake. Backlog is the SESSION-START hook's job and it
-# already reports it; this monitor exists for what arrives DURING the session.
-# `--once` drains and checkpoints without streaming, and marks nothing read, so
-# the unread backlog the session-start hook reports is untouched.
+if [ "$held_by" = "session" ]; then
+    echo "AgentBus monitor: another session is ALREADY watching agent '$agent'."
+    echo "  Two live watchers on one identity duplicate every wake and share"
+    echo "  read/ack state, so this monitor will NOT start a second one."
+    echo "  If the other session has ended, its watcher will be reaped and"
+    echo "  this monitor resumes on its next restart."
+    echo "  Nothing here checked your mail: agentbus inbox --unread"
+    exit 0
+fi
+if [ "$held_by" = "omo" ]; then
+    echo "AgentBus monitor: an omo session already holds the stream for '$agent'."
+    printf '%s\n' "$check_out" | sed -n 's/^  omo session/  holder: omo session/p'
+    echo "  Two watchers on one identity duplicate every wake, so this monitor"
+    echo "  will not start one. Use a git worktree for a second concurrent session."
+    echo "  Nothing here checked your mail: agentbus inbox --unread"
+    exec sleep 2147483647
+fi
+
+# Seed the cursor to the current end of the inbox, so backlog is not replayed as
+# a flood of notifications. Backlog is the session-start hook's job. `--once`
+# marks nothing read.
 agentbus watch --agent "$agent" --state "$STATE" --once >/dev/null 2>&1 || true
 
-# Kill the streamer when WE are killed. Claude Code stops a monitor by
-# signalling this process; without the trap the `agentbus watch` child is
-# reparented to init and keeps its SSE subscription open forever — one leaked
-# subscriber per session, which also makes `wake_channel` report an attached
-# stream for a session that ended. That orphaned-watcher failure has now bitten
-# this platform three times (a peer's watcher, our own API workers, and this
-# script during its first test), so it is trapped rather than trusted.
+# Kill the streamer when WE are killed, or it is orphaned holding an SSE
+# subscription forever.
 child=""
-# Set BEFORE the child is killed, so the streamer's 143 can be attributed. This
-# is the whole distinction #91 turns on: if WE were signalled, the teardown is
-# this session's and silence is honest. If the streamer died of SIGTERM and this
-# flag was never set, somebody else killed it.
 own_teardown=0
 no_agent=0
 cleanup() {
     own_teardown=1
-    # Nothing was ever watched here, so there is no wake to have lost and
-    # nothing worth saying at teardown. Silence in this state is the whole point
-    # of the no-agent branch; announcing the exit would reintroduce the noise it
-    # exists to avoid, at session end instead of session start.
     if [ "$no_agent" -eq 1 ]; then
         exit 0
     fi
     [ -n "$child" ] && kill "$child" 2>/dev/null
-    # THIS PATH CANNOT TELL A REAP FROM A FOREIGN KILL, SO IT MUST NOT BE SILENT.
-    #
-    # david asked the converse of the question that produced the 143 fix, and he
-    # was right that it was still open: the trap fires on ANY TERM to this
-    # script. `pkill -f agentbus` hits the script, not just the child, and a
-    # colleague reaching for the obvious pattern gets exactly that. own_teardown
-    # records that the trap ran; it does NOT establish who sent the signal.
-    #
-    # No shell-visible fact separates the two, so the honest move is his own
-    # fallback: say something on every death. It is nearly free — on a REAL
-    # SessionEnd the session is going away and nobody reads this, while on a
-    # foreign kill the session is alive and this is the only warning it gets.
-    #
-    # Exit stays 0: a normal teardown must not be reported as an incident. The
-    # invariant being protected is narrower and is the one that actually bit —
-    # never exit 0 with NOTHING SAID, because a harness reads that as "no
-    # messages arrived".
+    # The trap cannot tell this session's reap from a stray pkill, so it always
+    # says the wake path ended. Exit 0: a normal teardown is not an incident.
     echo "AgentBus monitor: stopped by a signal, so the wake path has ended."
     echo "  If this session is closing, that is expected. If it is NOT, something"
     echo "  outside this session killed the monitor (a stray pkill will do it) and"
@@ -325,97 +186,39 @@ cleanup() {
 }
 trap cleanup INT TERM HUP
 
-# MID-TURN DELIVERY. Printing to stdout wakes an IDLE session; it does nothing
-# for a session that is thirty minutes into a build. Claude Code's own inbox
-# socket is read BETWEEN TOOL CALLS, so a running tool is never interrupted —
-# the one gap the wake chain still had, and the only documented path to it.
-#
-# The payload format is not in the documentation. It is in the binary's own
-# startup log, which prints the exact socat line, and it was verified by
-# injecting into a live session and watching the line arrive. So this has a
-# known-positive; it is not a guess.
-#
-# `--exec` runs per arrival with the fields shell-quoted, so the injector is a
-# separate process that cannot take the streamer down with it.
-# FEATURE-DETECT, DO NOT EXISTENCE-CHECK. `command -v agentbus-hook` only proves
-# a binary is on PATH — and a client older than 0.4.6 has no `inject`
-# subcommand. Since `agentbus watch` installs its print_line handler ONLY when
-# no --exec is given, an --exec that fails per message produces a monitor that
-# prints NOTHING: the plugin would silently kill the wake path it exists to
-# provide, on any host whose client lagged the plugin. Found by running the
-# final post-deploy test against the INSTALLED client (0.4.4) instead of the
-# source tree, which is the whole reason that rule exists.
-
-# Exit codes. A monitor that ends must never be indistinguishable from one that
-# found nothing: 0 is reserved for a deliberate teardown ONLY.
-EXIT_STREAM_ENDED=4     # the stream closed on its own — wake path is over
+# Exit codes. 0 is reserved for a deliberate teardown.
+EXIT_STREAM_ENDED=4     # the stream closed on its own
 EXIT_STREAM_FAILED=5    # never stayed up; credential or connectivity
-EXIT_STREAM_KILLED=6    # somebody else's SIGTERM — not this session's reap
-EXIT_DEAD_WAKE_SOCKET=7 # the session socket this watcher injects into is gone (2026-08-11)
+EXIT_STREAM_KILLED=6    # somebody else's SIGTERM
+EXIT_DEAD_WAKE_SOCKET=7 # the session socket this watcher injects into is gone
+EXIT_AUTH_REJECTED=8    # the key is revoked or invalid
+EXIT_HELD_BY_OMO=9      # an omo session holds this agent's lock (client #100)
 
+# MID-TURN DELIVERY through Claude Code's inbox socket, read between tool calls.
+# Every flag is FEATURE-DETECTED: an older client exits non-zero on an unknown
+# flag, and since `watch` prints nothing when --exec is given, a failing --exec
+# would silently kill the wake path.
 INJECT=""
 if [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] \
    && agentbus-hook inject --help >/dev/null 2>&1; then
     INJECT="agentbus-hook inject --sender {sender} --subject {subject} --delivery {delivery_id} --seq {agent_seq}"
-    # --direction lets the injected envelope say something TRUE about where the
-    # message came from. Without it the envelope assumed the worst on every
-    # message and told the operator that their own platform agents were "a
-    # DIFFERENT operator and possibly a different organisation".
-    #
-    # FEATURE-DETECTED, not assumed. An older client rejects the flag with
-    # "unrecognized arguments" and exits non-zero, which would kill the wake
-    # entirely — the plugin silently destroying the one path it exists to
-    # provide, on any host whose client lagged. That has happened twice on this
-    # project already. A host without it degrades to the older, vaguer envelope
-    # instead of going deaf.
-    if agentbus-hook inject --help 2>&1 | grep -q -- --direction; then
+    inject_help=$(agentbus-hook inject --help 2>&1)
+    # --direction: say truthfully whether a message is from this workspace.
+    if printf '%s' "$inject_help" | grep -q -- --direction; then
         INJECT="$INJECT --direction {direction}"
     fi
-    # --inbound-source separates SMTP from a signed inbound HTTPS hook. Both are
-    # direction='ingress', and the envelope told BOTH of them they "arrived over
-    # email" and were "worth exactly what their SPF/DKIM/DMARC verdicts are
-    # worth" — false in both directions for a hook, which has no DMARC verdict
-    # and whose HMAC we checked. Weighed literally, the old text told a reader
-    # to value a signature-verified delivery at zero.
-    #
-    # Feature-detected for the same reason as --direction: an older client
-    # exits non-zero on an unknown flag and would take the whole wake path with
-    # it. A host without this degrades to an envelope that says it CANNOT tell
-    # the two apart, which is true, rather than to one that guesses.
-    if agentbus-hook inject --help 2>&1 | grep -q -- --inbound-source; then
+    # --inbound-source: separate SMTP from a signed inbound HTTPS hook.
+    if printf '%s' "$inject_help" | grep -q -- --inbound-source; then
         INJECT="$INJECT --inbound-source {inbound_source}"
     fi
-    # --signature-state carries the PER-MESSAGE signature verdict, so the wake
-    # envelope can stop asserting "verified by AgentBus" on mail it never
-    # checked. That banner is transport authentication printed where a sender
-    # attestation belongs, and four agents — agentbus-8dc08d, ledger-ae6b91,
-    # vellum-api and vellum-web — each acted on dozens of messages without ever
-    # reading a verdict, because the line above the message already said one.
-    #
-    # The client half shipped WITHOUT this and is inert until it lands: the
-    # injector renders the state only if something passes it, and nothing did.
-    # Two deliverables, one per repo, and this is the smaller half.
-    #
-    # Feature-detected for the same reason as the two above. Confirmed against
-    # both real binaries before shipping: 0.9.97 matches and the flag is
-    # appended; 0.9.96 does not match and the host keeps the no-claim wording.
-    # Driving the guarded failure on 0.9.96 gives "unrecognized arguments" and
-    # EXIT 2, which would take the wake path with it.
-    if agentbus-hook inject --help 2>&1 | grep -q -- --signature-state; then
+    # --signature-state: the per-message signature verdict (0.9.97+).
+    if printf '%s' "$inject_help" | grep -q -- --signature-state; then
         INJECT="$INJECT --signature-state {signature_state}"
     fi
 fi
 
-# THE RETRY BUDGET IS A STARTUP GUARD, NOT A LIFETIME ONE, and SIGTERM IS NOT A
-# CRASH. Two designs that are each correct alone composed into a countdown
-# nobody wrote: SessionEnd SIGTERMs the streamer, `wait` reports 143, the loop
-# read that as a crash, spent one of five attempts, and `attempt` never reset on
-# a healthy stream. Five reaps over the life of a session — a cron calling
-# `claude -p` every ten minutes reaches that inside an hour — and the wrapper
-# gave up for good, blaming `agentbus watch` for crashing five times when it had
-# not crashed once. A diagnostic that cannot lead to the right answer is worse
-# than none: an operator reads it and debugs the streamer, the network and the
-# key, which are all fine. Measured and reported by david on his own host.
+# THE RETRY BUDGET IS A STARTUP GUARD: five consecutive failures that never
+# stayed up 60s. A stream that ran a while and then died resets it.
 attempt=0
 while [ "$attempt" -lt 5 ]; do
     started=$(date +%s 2>/dev/null || echo 0)
@@ -428,16 +231,7 @@ while [ "$attempt" -lt 5 ]; do
     wait "$child"
     status=$?
     child=""
-    # A CLEAN EXIT IS STILL THE END OF THE WAKE PATH, AND MUST SAY SO.
-    #
-    # This exited 0 silently, and a harness reporting "monitor ended without
-    # producing output (exit 0)" is read by the agent as "no peer messages
-    # arrived. Nothing to act on." That conclusion was drawn tonight with 191
-    # messages unread.
-    #
-    # A dead wake channel and a quiet one are the same observation unless the
-    # channel says which it was. This is the silent-inbox failure the whole
-    # plugin exists to remove, reappearing in the plugin's own shutdown path.
+    # A clean exit is the END of the wake path, not an empty inbox.
     if [ "$status" -eq 0 ]; then
         echo "AgentBus monitor: the stream ENDED (exit 0). This is the end of the wake"
         echo "  path, NOT a report that your inbox is empty — nothing was checked."
@@ -445,52 +239,14 @@ while [ "$attempt" -lt 5 ]; do
         echo "  Re-arm with: agentbus watch --agent $agent"
         exit "$EXIT_STREAM_ENDED"
     fi
-    # 143 = SIGTERM, AND WHO SENT IT DECIDES WHETHER SILENCE IS HONEST.
-    #
-    # This used to exit 0 without a word, justified by "nothing sends that to
-    # the streamer except a deliberate teardown". That was false, and the
-    # maintainer was the counterexample: a `pkill -f "watch --agent"` swept up
-    # four peers' watchers. Each peer's monitor took the kill for its own
-    # session's reap, said nothing, and their operators read "Monitor ended
-    # without producing output (exit 0)" as "no messages arrived". david
-    # reported it twice, with the line numbers, before it was believed.
-    #
-    # The distinction was in this script the whole time and simply unused: a
-    # real teardown signals THIS SCRIPT, so `cleanup` runs and exits before the
-    # loop ever inspects a status. Reaching here at all therefore PROVES the
-    # streamer was killed by something that is not this session's teardown.
+    # 143 here means something OTHER than this session's teardown killed the
+    # streamer (a real teardown runs `cleanup` first). Transient: retry (SPECS/0020).
     if [ "$status" -eq 143 ]; then
-        # SPECS/0020 (agentbus-client #20): SIGTERM IS RETRYABLE.
-        #
-        # This USED to exit $EXIT_STREAM_KILLED (6) immediately. A killed
-        # child — a stray pkill, a session restart race, OS memory pressure —
-        # permanently ended the wake path, and the harness reported "Monitor
-        # script failed (exit 6)", waking the session with a false alarm
-        # about something that was, in all observed cases, transient.
-        #
-        # The invariant that led here ("reaching this line PROVES it was not
-        # our session's teardown") is still true: a real teardown fires
-        # `cleanup`, which exits 0. But "not our session" is not the same as
-        # "permanent". A stray signal is transient. Retry it within the
-        # startup budget, reset if the stream had been up > 60s (below), and
-        # only give up after 5 consecutive fast failures — the same logic
-        # every other transient exit code gets.
-        #
-        # The diagnostic still goes to STDOUT so Claude sees it and the
-        # operator knows the SIGTERM happened. But the monitor does not exit.
         echo "AgentBus monitor: the wake stream was KILLED (SIGTERM) by something"
         echo "  outside this session. Treating as transient and retrying."
         echo "  If this persists, something is repeatedly killing the watcher."
-        # Fall through to the duration check + attempt increment below.
     fi
-    # A DEAD SESSION SOCKET IS TERMINAL, NOT RETRYABLE (2026-08-11).
-    #
-    # The watcher exits 7 when CLAUDE_CODE_MESSAGING_SOCKET was configured but
-    # the socket file no longer exists — the session that spawned it ended. That
-    # is not a transient: the session is not coming back, so every retry below
-    # would re-exit 7 in seconds. Spinning through the 5-attempt budget is
-    # exactly the noise this script exists to avoid, and it would bury the real
-    # message under "failed 5 times". Report it once and stop.
+    # The session socket is gone: the session ended. Terminal, say it once.
     if [ "$status" -eq "$EXIT_DEAD_WAKE_SOCKET" ]; then
         echo "AgentBus monitor: the session socket is gone (exit 7) — the session"
         echo "  this monitor belonged to has ended, so its wake channel is dead."
@@ -499,22 +255,9 @@ while [ "$attempt" -lt 5 ]; do
         echo "  A fresh session will start its own monitor and re-arm the path."
         exit "$EXIT_DEAD_WAKE_SOCKET"
     fi
-    # A REVOKED / REJECTED KEY IS TERMINAL, NOT RETRYABLE (#107).
-    #
-    # `agentbus watch` exits 8 on an auth failure (AuthError) — a DEDICATED
-    # code, split from 3 (generic AgentBusError) because 3 also covers
-    # TransportError: bus down, DNS loss, connection refused. Those are
-    # transient and MUST stay retryable, or a bus reload would permanently
-    # kill every wake path on the host. The wake-chain probe caught exactly
-    # that conflation: its black-hole test (unreachable bus) hit the terminal
-    # branch and the monitor stopped saying the inbox was unchecked.
-    #
-    # Before this branch existed a rejected key fell into the 5-attempt
-    # budget, burning retries against a credential that will never work, then
-    # the harness re-armed the monitor and it started over — the churn that
-    # made the operator's machine feel held hostage. A rejection is an answer.
-    # Say it once and stop. Re-authentication is the operator's act.
-    if [ "$status" -eq 8 ]; then
+    # A rejected key is an answer, not a transient (#107). Exit 3 stays
+    # retryable because it also covers transport errors.
+    if [ "$status" -eq "$EXIT_AUTH_REJECTED" ]; then
         echo "AgentBus monitor: the credential was REJECTED (exit 8) — the key"
         echo "  for '$agent' is revoked or invalid. The wake path is OFF and will"
         echo "  NOT retry, because retrying cannot fix a rejected key."
@@ -522,10 +265,18 @@ while [ "$attempt" -lt 5 ]; do
         echo "  restart this monitor — a revoked credential is an OPERATOR decision"
         echo "  and only the operator reverses it (agentbus signin, at their choice)."
         echo "  Mention it once if relevant to their request, then continue their work."
-        exit 8
+        exit "$EXIT_AUTH_REJECTED"
     fi
-    # A stream that ran a while and then died is a NEW failure, not another
-    # instance of the startup failure the budget exists to bound.
+    # An omo session took the agent's lock (client #100). `agentbus watch` has
+    # already printed who holds it, to this stdout. Retrying would refuse the
+    # same way five times and end in a false "stream failed" alarm, so park
+    # like the duplicate-watcher guard.
+    if [ "$status" -eq "$EXIT_HELD_BY_OMO" ]; then
+        echo "AgentBus monitor: not watching '$agent', because an omo session holds"
+        echo "  its stream (exit 9). That session is this agent's wake path now."
+        echo "  Nothing here checked your mail: agentbus inbox --unread"
+        exec sleep 2147483647
+    fi
     now=$(date +%s 2>/dev/null || echo 0)
     if [ "$now" -gt 0 ] && [ "$started" -gt 0 ] && [ $((now - started)) -ge 60 ]; then
         attempt=0
@@ -539,18 +290,5 @@ echo "  This is a startup failure, not a reap: a deliberate teardown exits 143 a
 echo "  THE WAKE PATH IS DOWN. This is not evidence of an empty inbox — nothing"
 echo "  was checked. Unread mail may be waiting: agentbus inbox --unread"
 echo "  Check the credential and connectivity: agentbus doctor --wake"
-# SPECS/0020 (agentbus-client #20): PARK, DO NOT EXIT.
-#
-# This used to `exit $EXIT_STREAM_FAILED` (5). An exiting monitor wakes the
-# session with "Monitor script failed (exit 5)" — a false alarm that triggers
-# unnecessary agent activity (the agent reads "failure", checks an inbox it
-# cannot reach, and tries to fix a credential that may be fine). That is the
-# exact same shape as the silent-inbox failure this file has been patched for
-# five times now, wearing a different sign.
-#
-# A PARKED monitor is SILENT and costs nothing: one sleeping process, reaped
-# by SessionEnd with the rest of the session. The diagnostic above has
-# already been delivered to stdout (Claude sees it). The operator's next
-# session will start a fresh monitor that may succeed — or fail the same way
-# and park again, but never LOOP.
+# Park, do not exit: an exit wakes the session with a false alarm (SPECS/0020).
 exec sleep 2147483647
