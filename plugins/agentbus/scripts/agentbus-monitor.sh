@@ -113,20 +113,38 @@ fi
 # foreground `agentbus watch` does not count: it wakes no session, and parking
 # beside it would leave this session deaf.
 #
-# `agentbus watch-check` (client 0.9.108+, #100) reports both kinds. It is
-# feature-detected; an older client falls back to the watch-status scan, which
-# cannot see an omo lock.
+# `agentbus watch-check` (client 0.9.108+, #100) reports both kinds. With --json,
+# 0.9.109+ (#101) prints each holder's kind; 0.9.108 accepts the flag and prints
+# text, so the output decides which rules apply. A client without watch-check
+# falls back to the watch-status scan, which cannot see omo.
 SESSION_LABEL='-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json\.pid'
+KIND_OMO='"kind"[[:space:]]*:[[:space:]]*"omo"'
+KIND_SESSION='"kind"[[:space:]]*:[[:space:]]*"session_monitor"'
 held_by=""
+omo_holder_line=""
 if agentbus watch-check --help >/dev/null 2>&1; then
     if [ -n "$sid" ]; then
-        check_out=$(agentbus watch-check --agent "$agent" --session "$sid" 2>/dev/null)
+        check_out=$(agentbus watch-check --json --agent "$agent" --session "$sid" 2>/dev/null)
     else
-        check_out=$(agentbus watch-check --agent "$agent" 2>/dev/null)
+        check_out=$(agentbus watch-check --json --agent "$agent" 2>/dev/null)
     fi
     check_status=$?
-    if [ "$check_status" -eq 4 ]; then
+    check_json=0
+    case "$check_out" in
+        "{"*) printf '%s\n' "$check_out" | grep -q '"holders"' && check_json=1 ;;
+    esac
+    if [ "$check_status" -eq 4 ] && [ "$check_json" -eq 1 ]; then
+        if printf '%s\n' "$check_out" | grep -qE -- "$KIND_OMO"; then
+            held_by="omo"
+            omo_path=$(printf '%s\n' "$check_out" | tr -d '\n' \
+                | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"omo"[^}]*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+            omo_holder_line="  holder: omo session [${omo_path:-lock path not reported}]"
+        elif [ -n "$sid" ] && printf '%s\n' "$check_out" | grep -qE -- "$KIND_SESSION"; then
+            held_by="session"
+        fi
+    elif [ "$check_status" -eq 4 ]; then
         if printf '%s\n' "$check_out" | grep -q '^  omo session'; then
+            omo_holder_line=$(printf '%s\n' "$check_out" | sed -n 's/^  omo session/  holder: omo session/p')
             held_by="omo"
         elif [ -n "$sid" ] && printf '%s\n' "$check_out" | grep -qE -- "$SESSION_LABEL"; then
             held_by="session"
@@ -151,7 +169,7 @@ if [ "$held_by" = "session" ]; then
 fi
 if [ "$held_by" = "omo" ]; then
     echo "AgentBus monitor: an omo session already holds the stream for '$agent'."
-    printf '%s\n' "$check_out" | sed -n 's/^  omo session/  holder: omo session/p'
+    printf '%s\n' "${omo_holder_line:-  holder: omo session}"
     echo "  Two watchers on one identity duplicate every wake, so this monitor"
     echo "  will not start one. Use a git worktree for a second concurrent session."
     echo "  Nothing here checked your mail: agentbus inbox --unread"
